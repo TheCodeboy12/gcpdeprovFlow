@@ -1,0 +1,47 @@
+main:
+  params: [args] # Accepts input arguments like {"userKey": "user@example.com"}
+  steps:
+    - init:
+        assign:
+          - userKey: ${args.userKey}
+          - listUserGroupsResponse: null
+          # These are initialized but not used in the rest of this snippet
+    - getUserGroups:
+        call: getUserGoogleGroups
+        args:
+          userKey: ${userKey}
+        result: listUserGroupsResponse
+    - ret:
+        return: ${listUserGroupsResponse}
+
+getUser:
+  params: [userKey]
+  steps:
+    - main:
+        call: http.get
+        args:
+          url: ${"https://admin.googleapis.com/admin/directory/v1" + "/users/" + userKey}
+          auth:
+            type: OAuth2
+            scopes:
+              ["https://www.googleapis.com/auth/admin.directory.user.readonly"]
+        result: getUserResponse
+    - ret:
+        return: ${getUserResponse}
+
+getUserGoogleGroups:
+  params: [userKey]
+  steps:
+    - main:
+        call: http.get
+        args:
+          url: ${"https://admin.googleapis.com/admin/directory/v1" + "/groups/"}
+          auth:
+            type: OAuth2
+            scopes: ["https://apps-apis.google.com/a/feeds/groups/"]
+          query:
+            userKey: ${userKey}
+            domain: "bizzabo.com"
+        result: getUserGroupsRes
+    - ret:
+        return: ${getUserGroupsRes}
