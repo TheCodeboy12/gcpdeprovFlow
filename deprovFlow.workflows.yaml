@@ -5,8 +5,6 @@ main:
         assign:
           - userKey: ${args.userKey}
 
-          # - listUserGroupsResponse: null
-          # These are initialized but not used in the rest of this snippet
     - deleteFromGroups:
         steps:
           - getUserGroups:
