@@ -1,0 +1,18 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - userKey: ${args.userKey}
+    - removeFromSendGrid:
+        call: http.delete
+        args:
+          url: "https://api.sendgrid.com/v3/teammates/"
+          headers:
+            Authorization: ${sys.get_env("SENDGRID_API_KEY")}
+            Content-Type: "application/json"
+          query: 
+              username: ${userKey}
+        result : removeFromSendGridRes
+    - ret:
+        return: ${removeFromSendGridRes}
