@@ -7,27 +7,48 @@ main:
 
           # - listUserGroupsResponse: null
           # These are initialized but not used in the rest of this snippet
-    - getUserGroups:
-        call: getUserGoogleGroups
-        args:
-          userKey: ${userKey}
-        result: listUserGroupsResponse
-    - checkNotEmpty:
-        switch:
-          - condition: ${map.get(listUserGroupsResponse.body,"groups") == null}
-            next: ret
-    - loopOverList:
-        for:
-          value: group
-          in: ${listUserGroupsResponse.body.groups}
-          steps:
-            - deleteFromGroups:
-                call: deleteFromGroups
-                args:
-                  userKey: ${userKey}
-                  groupKey: ${group.id}
-
-
+    - deleteFromGroups:
+        steps:
+          - getUserGroups:
+              call: getUserGoogleGroups
+              args:
+                userKey: ${userKey}
+              result: listUserGroupsResponse
+          - checkNotEmpty:
+              switch:
+                - condition: ${map.get(listUserGroupsResponse.body,"groups") != null}
+                  steps:
+                    - loopOverList:
+                        for:
+                          value: group
+                          in: ${listUserGroupsResponse.body.groups}
+                          steps:
+                            - remove:
+                                call: deleteFromGroups
+                                args:
+                                    userKey: ${userKey}
+                                    groupKey: ${group.id}
+                            - logRemovedGroup:
+                                call: sys.log
+                                args:
+                                    json:
+                                      - groupRemoved: ${group.email}
+                                      - userKey: ${userKey}
+                                    severity: "INFO"
+                                    
+    - moveToOffboardingOU:
+          call: changeOrgUnit
+          args:
+              userKey: ${userKey}
+              orgUnitPath: "/Off boarding"
+    - signUserOut:
+          call: signOut
+          args:
+              userKey: ${userKey}
+    - deleteTokens:
+          call: deleteTokens
+          args:
+              userKey: ${userKey}
     - ret:
         return: ${listUserGroupsResponse.body}
 
@@ -40,11 +61,11 @@ getUser:
     - main:
         call: http.get
         args:
-          url: ${baseURL + "/users/" + userKey}
-          auth:
-            type: OAuth2
-            scopes:
-              ["https://www.googleapis.com/auth/admin.directory.user.readonly"]
+            url: ${baseURL + "/users/" + userKey}
+            auth:
+              type: OAuth2
+              scopes:
+                ["https://www.googleapis.com/auth/admin.directory.user.readonly"]
         result: getUserResponse
     - ret:
         return: ${getUserResponse}
@@ -87,3 +108,75 @@ deleteFromGroups:
         result: deleteFromGroupsRes
     - ret:
         return: ${deleteFromGroupsRes}
+
+changeOrgUnit:
+  params: [userKey, orgUnitPath]
+  steps:
+     - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+     - main:
+          call: http.put
+          args:
+              url: ${baseURL + "/users/" + userKey}
+              body:
+                orgUnitPath: ${orgUnitPath}
+              auth:
+                type: OAuth2
+                scopes: ["https://www.googleapis.com/auth/admin.directory.user"]
+          result: changeOrgUnitRes
+     - ret:
+          return: ${changeOrgUnitRes}
+
+signOut:
+  params: [userKey]
+  steps:
+     - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+     - main:
+          call: http.post
+          args:
+              url: ${baseURL + "/users/" + userKey + "/signOut"}
+              auth:
+                type: OAuth2
+                scopes: ["https://www.googleapis.com/auth/admin.directory.user.security"]
+          result: signUserOutRes
+     - ret:
+          return: ${signUserOutRes}
+
+deleteTokens:
+  params: [userKey]
+  steps:
+      - init:
+          assign:
+            - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+      - getAllTokens:
+          call: http.get
+          args:
+              url: ${baseURL + "/users/" + userKey + "/tokens"}
+              auth:
+                type: OAuth2
+                scope: "https://www.googleapis.com/auth/admin.directory.user.security"
+          result: deleteTokensRes
+      - checkNotEmpty:
+          switch:
+            - condition: ${map.get(deleteTokensRes.body,"items") != null}
+              steps:
+                - loopOverList:
+                    for:
+                      value: token
+                      in: ${deleteTokensRes.body.items}
+                      steps:
+                        - deleteToken:
+                            call: http.delete
+                            args:
+                              url: ${baseURL + "/users/" + userKey + "/tokens/" + token.clientId}
+                              auth:
+                                type: OAuth2
+                                scope: "https://www.googleapis.com/auth/admin.directory.user.security"
+                        - logTokenRemoval:
+                              call: sys.log
+                              args:
+                                json: {"TokenRemoved": '${token.displayText}'}
+                                severity: "INFO"
