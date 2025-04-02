@@ -1,0 +1,85 @@
+main:
+  params:
+    - args
+  steps:
+    - init:
+        steps:
+          - define:
+                assign:
+                - userKey: ${args.userKey}
+    # - disableUser:
+    #     call: disableUser
+    #     args:
+    #       userKey: ${userKey}
+    - login:
+        call: login
+          
+
+
+login:
+  steps:
+    - getSecret:
+        call: googleapis.secretmanager.v1.projects.secrets.versions.accessString
+        args:
+          secret_id: "looker_client_secret"
+          project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          version: "latest"
+        result: clientSecret
+    - getClientId:
+        call: googleapis.secretmanager.v1.projects.secrets.versions.accessString
+        args:
+          secret_id: "looker_client_id"
+          project_id : ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          version: "latest"
+        result: clientId
+    - init:
+            assign:
+              - baseUrl: ${sys.get_env("BASE_URL")}
+              - clientId: ${clientId}
+              - clientSecret: ${clientSecret} 
+    - main:
+        call: http.post
+        args:
+          url: ${baseUrl + "/login"}
+          body:
+            clientId: ${clientId}
+            clientSecret: ${clientSecret}
+        result: loginResponse
+    - ret:
+        return: ${loginResponse}
+
+getUser:
+  params:
+    - userKey
+  steps:
+    - init:
+        assign:
+          - baseUrl: ${sys.get_env("BASE_URL")}
+    - main: 
+        call: http.get
+        args:
+          url: ${baseUrl + "/users/" + userKey}
+          headers:
+            Authorization: "Bearer ${loginResponse.body.access_token}"
+        result: getUserResponse
+    - ret:
+        return: ${getUserResponse}
+disableUser:
+  params:
+    - userKey
+  steps:
+    - init:
+        assign:
+          - userId : ${getUser(userKey).body.id}
+          - baseUrl: ${sys.get_env("BASE_URL")}
+    - main:
+        call: http.patch
+        args:
+          url: ${baseUrl + "/users/"  + userId}
+          headers:
+            Authorization: "Bearer ${loginResponse.body.access_token}"
+          body:
+            is_disabled: True
+        result: disableUserResponse
+    - ret:
+        return: ${disableUserResponse}

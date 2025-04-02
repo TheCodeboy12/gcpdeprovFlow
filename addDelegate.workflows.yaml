@@ -1,0 +1,12 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - delegatedUserKey: ${args.userKey}
+          - delegatorUserKey: ${args.delegatorUserKey}
+          - addDelegateCloudFuncUrl: ${sys.get_env("ADD_DELEGATE_CLOUD_FUNC_URL")}
+          
+    - addDelegate:
+        call:
+     

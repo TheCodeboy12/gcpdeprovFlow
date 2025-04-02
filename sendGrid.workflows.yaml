@@ -2,17 +2,26 @@ main:
   params: [args]
   steps:
     - init:
-        assign:
-          - userKey: ${args.userKey}
+        steps:
+          - getApiKey:
+              call: googleapis.secretmanager.v1.projects.secrets.versions.accessString
+              args:
+                secret_id: sendgrid-api-key
+                # project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+                version: "latest"
+              result: apiKey
+          - define: 
+              assign:
+                - userKey: '${args.userKey}'
+                - baseUrl: '${sys.get_env("BASE_URL")}'
     - removeFromSendGrid:
         call: http.delete
         args:
-          url: "https://api.sendgrid.com/v3/teammates/"
+          url: '${baseUrl + "/v3/teammates/" + userKey}'
           headers:
-            Authorization: ${sys.get_env("SENDGRID_API_KEY")}
-            Content-Type: "application/json"
-          query: 
-              username: ${userKey}
+            "Authorization": '${"Bearer" + apiKey}'
+            "Content-Type": "application/json"
+            "Accept": "application/json"
         result : removeFromSendGridRes
     - ret:
         return: ${removeFromSendGridRes}
