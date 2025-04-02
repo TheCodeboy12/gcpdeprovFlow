@@ -3,10 +3,20 @@ main:
   steps:
     - init:
         assign:
-          - delegatedUserKey: ${args.userKey}
-          - delegatorUserKey: ${args.delegatorUserKey}
+          - userKey: ${args.userKey}
+          - delegateEmail: ${args.delegateEmail}
           - addDelegateCloudFuncUrl: ${sys.get_env("ADD_DELEGATE_CLOUD_FUNC_URL")}
           
     - addDelegate:
-        call:
-     
+        call: http.post
+        args:
+          url: '${addDelegateCloudFuncUrl}'
+          query: 
+            userKey:  ${userKey}
+            delegateEmail : ${delegateEmail}
+          auth:
+            type: OIDC
+
+        result: addDelegateResponse
+    - ret:
+        return: addDelegateResponse

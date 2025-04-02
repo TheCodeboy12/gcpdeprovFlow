@@ -1,0 +1,33 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - userKey: ${args.userKey}
+          - inDays: ${args.inDays}
+          - inDays: ${sys.now() + 60 * 60 * 24 * inDays}
+          - inDays: ${time.format(inDays)}
+          - gcpLocation: ${sys.get_env("GOOGLE_CLOUD_LOCATION")}
+          - gcpProject: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - gcpServiceAccount: ${sys.get_env("SERVICE_ACC_EMAIL")}
+          - queueId: ${sys.get_env("QUEUE_ID")}
+          - message: 
+              suspended: true
+          - encodedMessage: '${base64.encode(json.encode(message))}'
+    - addTask:
+        call: googleapis.cloudtasks.v2.projects.locations.queues.tasks.create
+        args:
+            parent: '${"projects/" + gcpProject + "/locations/" + gcpLocation + "/queues/" + queueId}'
+            body:
+                task:
+                  httpRequest:
+                    httpMethod: "PUT"
+                    url: '${"https://admin.googleapis.com/admin/directory/v1/users/" + userKey}'
+                    oauthToken: 
+                      scope: "https://www.googleapis.com/auth/admin.directory.user"
+                      serviceAccountEmail: ${gcpServiceAccount}
+                    body: ${encodedMessage}
+                  scheduleTime: ${inDays}
+        result: addTaskResponse
+    - ret:
+        return: addTaskResponse
