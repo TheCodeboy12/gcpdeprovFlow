@@ -1,0 +1,51 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - driveDocsAppId : ${sys.get_env("DRIVE_DOCS_APP_ID")}
+          - calendarAppId : ${sys.get_env("CALENDAR_APP_ID")}
+          - sourceUserKey: ${args.sourceUserKey}
+          - destUserKey: ${args.destUserKey}
+          - calendar: ${args.calendar}
+          - calendar_releaseResource: ${args.calendar_releaseResource}
+          - driveDocs: ${args.driveDocs}
+          - driveDocs_privacyLevel: ${args.driveDocs_privacyLevel}
+          - calObj:
+              applicationId: ${calendarAppId}
+              applicationTransferParams: 
+                key: "RELEASE_RESOURCES"
+                value: ${calendar_releaseResource}
+          - driveObj:
+              applicationId: ${driveDocsAppId}
+              applicationTransferParams: 
+                key: "PRIVACY_LEVEL"
+                value: ${driveDocs_privacyLevel}
+    - main:
+        call: http.post
+        args:
+          url: "https://admin.googleapis.com/admin/datatransfer/v1/transfers"
+          auth:
+            type: OAuth2
+            scope: "https://www.googleapis.com/auth/admin.datatransfer"
+          body:
+            oldOwnerUserId: ${sourceUserKey}
+            newOwnerUserId: ${destUserKey}
+
+          
+
+
+# dataTransferReq:
+#   params:
+#     - sourceUserKey #string
+#     - destUserKey #string
+#     - calendar #bool
+#     - calendar_releaseResource #bool
+#     - driveDocs #bool
+#     - driveDocs_privacyLevel # enum - either SHARED or PRIVATE -  default Shared
+#   steps:
+#     - init:
+        
+
+
+

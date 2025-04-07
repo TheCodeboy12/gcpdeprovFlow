@@ -1,0 +1,55 @@
+main:
+  params:
+    - args
+  steps:
+    - init:
+        steps:
+          - define:
+                assign:
+                - userKey: ${args.userKey}
+                - groupKey: ${getGroupId(args.groupKey)}
+                - expiryDate: ${args.expiryDate}
+          - main:
+              call : addToGroupWithExpiry
+              args: 
+                userKey: ${userKey}
+                groupKey: ${groupKey}
+                expiryDate: ${expiryDate}  
+getGroupId:
+  params:
+    - groupKey
+  steps:
+    - main:
+        call: http.get
+        args:
+          url: ${"https://admin.googleapis.com/admin/directory/v1/groups/" + groupKey} 
+          auth:
+            type: OAuth2
+            scope: "https://www.googleapis.com/auth/admin.directory.group.readonly"
+        result: getGroupIdRes
+    - ret:
+        return: ${getGroupIdRes.body.id}
+
+addToGroupWithExpiry: 
+  params:
+    - userKey
+    - groupKey
+    - expiryDate
+  steps:
+      - main:
+          call: http.post
+          args:
+            url: ${"https://cloudidentity.googleapis.com/v1" + "/groups/" + groupKey + "/memberships"}
+            body:
+              preferredMemberKey:
+                id: ${userKey}
+              roles: 
+                name : "MEMBER"
+                expiryDetail: 
+                  expireTime: ${expiryDate}
+            auth:
+              type: OAuth2
+              scope: "https://www.googleapis.com/auth/cloud-identity.groups"
+          result: addToGroupWithExpiryRes
+      - ret:
+          return: ${addToGroupWithExpiryRes}
