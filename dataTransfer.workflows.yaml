@@ -5,22 +5,58 @@ main:
         assign:
           - driveDocsAppId : ${sys.get_env("DRIVE_DOCS_APP_ID")}
           - calendarAppId : ${sys.get_env("CALENDAR_APP_ID")}
-          - sourceUserKey: ${args.sourceUserKey}
-          - destUserKey: ${args.destUserKey}
-          - calendar: ${args.calendar}
-          - calendar_releaseResource: ${args.calendar_releaseResource}
-          - driveDocs: ${args.driveDocs}
-          - driveDocs_privacyLevel: ${args.driveDocs_privacyLevel}
-          - calObj:
-              applicationId: ${calendarAppId}
-              applicationTransferParams: 
-                key: "RELEASE_RESOURCES"
-                value: ${calendar_releaseResource}
-          - driveObj:
-              applicationId: ${driveDocsAppId}
-              applicationTransferParams: 
-                key: "PRIVACY_LEVEL"
-                value: ${driveDocs_privacyLevel}
+          # - sourceUserKey: ${args.sourceUserKey}
+          - sourceUserKey: ${getUserId(args.sourceUserKey)}
+          # - destUserKey: ${args.destUserKey}
+          - destUserKey: ${getUserId(args.destUserKey)}
+          - calendar: ${args.calendar} # bool
+          - calendar_releaseResource: ${args.calendar_releaseResource} # bool
+          - driveDocs: ${args.driveDocs} # bool
+          - driveDocs_private_files: ${args.driveDocs_privacyLevel} # bool
+          - drivePrivacyLevel : "SHARED"
+          - apps: []
+    - assembleCalObj:
+        switch:
+          - condition: ${calendar}
+            steps:
+              - createCalObj:
+                  assign:
+                    - calObj:
+                        applicationId: ${calendarAppId}
+                        applicationTransferParams: 
+                          key: "RELEASE_RESOURCES"
+                          value: ${"" + calendar_releaseResource}
+              - pushCalObj:
+                  assign: 
+                    - apps: ${list.concat(apps,calObj)}
+    - assembleDriveObj:
+        switch:
+          - condition: ${driveDocs}
+            steps:
+              - checkPrivacyLevel: #check whether or not we need to change the default
+                  switch:
+                    - condition: ${driveDocs_private_files}
+                      steps:
+                        - define:
+                            assign:
+                              - drivePrivacyLevel: "PRIVATE"
+              - createDriveObj:
+                  assign:
+                    - driveObj:
+                        applicationId: ${driveDocsAppId}
+                        applicationTransferParams: 
+                          key: "PRIVACY_LEVEL"
+                          value: ${drivePrivacyLevel}
+                          
+              - pushDriveObj:
+                  assign: 
+                    - apps: ${list.concat(apps,driveObj)}
+    # - logit:
+    #       call: sys.log
+    #       args:
+    #         json:
+    #           apps: ${apps}
+    #         severity: "INFO"
     - main:
         call: http.post
         args:
@@ -31,21 +67,29 @@ main:
           body:
             oldOwnerUserId: ${sourceUserKey}
             newOwnerUserId: ${destUserKey}
-
-          
-
-
-# dataTransferReq:
-#   params:
-#     - sourceUserKey #string
-#     - destUserKey #string
-#     - calendar #bool
-#     - calendar_releaseResource #bool
-#     - driveDocs #bool
-#     - driveDocs_privacyLevel # enum - either SHARED or PRIVATE -  default Shared
-#   steps:
-#     - init:
-        
-
-
-
+            applicationDataTransfers: ${apps} 
+        result: mainRes
+    - finish:
+        steps:
+          - logit:
+              call: sys.log
+              args:
+                json:
+                  mainRes: ${mainRes}
+                severity: "INFO"
+          - ret:
+              return: ${mainRes}
+getUserId:
+  params:
+    - userKey
+  steps:
+    - main:
+        call: http.get
+        args:
+          url: ${"https://admin.googleapis.com/admin/directory/v1/users/" + userKey}
+          auth:
+            type: OAuth2
+            scope: "https://www.googleapis.com/auth/admin.directory.user.readonly" 
+        result: getUserIdRes
+    - ret:
+        return: ${getUserIdRes.body.id}
