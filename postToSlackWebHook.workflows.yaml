@@ -1,0 +1,15 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - payLoad: ${args.payLoad}
+          - webhookUrl: sys.get_env("WEBHOOK_URL")
+    - postIt:
+        call: http.post
+        args:
+          url: ${webhookUrl}
+          body: ${payLoad}
+        result: postItRes
+    - ret:
+        return: ${postItRes}

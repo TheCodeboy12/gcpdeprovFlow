@@ -1,0 +1,44 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - oktaUserObject : ${args.oktaUserObject}
+          - argsToRun:
+              userKey: ${oktaUserObject.profile.email}
+              groupKey: ${sys.get_env("KANDJI_GRACE_PERIOD_GROUP_KEY")}
+              expiryDate: ${time.format((sys.now() + 60 * 60 * 24),"")}
+          - slackWebhookUrl: ${sys.get_env("WEBHOOK_URL")}
+          
+    # allows the new hire to use their work laptop without setting up 2FA
+    # Then allows them to setup okta verify on their laptop instead of phone
+    - addToKandjiGracePeriod:
+        steps:
+          - addToGroup:
+              call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+              args:
+                workflow_id: "addToGroupWithExpiry"
+                argument: ${argsToRun}
+              result: addToGroupResponse
+          - logit:
+              call: sys.log
+              args:
+                json:
+                  addToGroupResponse: ${addToGroupResponse}
+                severity: "INFO"
+          - postToSlack:
+              call: http.post
+              args:
+                url: ${slackWebhookUrl}
+                body:
+                  blocks:
+                    - type: header
+                      text:
+                        type: plain_text
+                        text: "Onboarding flow"
+                        emoji: true
+                    - type: section
+                      text:
+                        type: plain_text
+                        text: ${"Added " + oktaUserObject.profile.email + " to " + sys.get_env("KANDJI_GRACE_PERIOD_GROUP_KEY") + " group"}
+                        emoji: true
