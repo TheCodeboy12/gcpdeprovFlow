@@ -1,0 +1,59 @@
+main:
+  steps:
+    - init:
+        assign:
+          - kandjiBaseUrl: ${sys.get_env("KANDJI_API_BASE_URL")} # Get the base URL for the Kandji API from environment variables.
+          - licensingEndpoint: "/api/v1/settings/licensing" # Define the specific endpoint for licensing information.
+          - tenantOverLicenseLimit: false # Initialize a flag to track if the tenant is over the license limit.
+          - kandjiSecretId: ${sys.get_env("KANDJI_SECRET_ID")} # Get the secret ID for the Kandji API key from environment variables.
+    - getKandjiApiKey:
+        call: googleapis.secretmanager.v1.projects.secrets.versions.accessString # Call the Secret Manager API to retrieve the API key.
+        args:
+          secret_id: ${kandjiSecretId} # Get the secret ID from environment variables.
+          version: "latest" # Get the latest version of the secret.
+        result: kandjiApiKey # Store the retrieved API key in the 'kandjiApiKey' variable.
+    - getLicensingInfo:
+        call: http.get # Make an HTTP GET request to the Kandji API.
+        args:
+          url: ${kandjiBaseUrl + licensingEndpoint} # Construct the full URL using the base URL and endpoint.
+          headers:
+            Authorization: ${"Bearer " + kandjiApiKey} # Set the Authorization header with the Bearer token.
+        result: getLicensingInfoResponse # Store the API response in the 'getLicensingInfoResponse' variable.
+    - checkLicenseLimit:
+        switch: # Use a switch statement to handle different response scenarios.
+          - condition: ${getLicensingInfoResponse.body.tenantOverLicenseLimit == true} # Check if the 'tenantOverLicenseLimit' attribute is true.
+            steps:
+              - setTenantOverLimit:
+                  assign:
+                    - tenantOverLicenseLimit: true # Set the flag to true if the tenant is over the limit.
+              - logOverLimit:
+                  call: sys.log # Log a warning message.
+                  args:
+                    text: "Tenant is over the license limit"
+                    severity: "WARNING"
+              - postToSlack:
+                  call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                  args:
+                    workflow_id: "postToSlack"
+                    argument:
+                      payload:
+                        type: "simple"
+                        simpleMessagePayload:
+                          header: "Alert ⚠️: Kandji license over limit"
+                          message: This is to let you know that we are over our license limit on Kandji.
+          - condition: ${getLicensingInfoResponse.body.tenantOverLicenseLimit == false} # Check if the 'tenantOverLicenseLimit' attribute is false.
+            steps:
+              - logUnderLimit:
+                  call: sys.log # Log an info message.
+                  args:
+                    text: "Tenant is under the license limit"
+                    severity: "INFO"
+          - condition: ${getLicensingInfoResponse.body.tenantOverLicenseLimit == null} # Check if the 'tenantOverLicenseLimit' attribute is null.
+            steps:
+              - logNullLimit:
+                  call: sys.log # Log a warning message.
+                  args:
+                    text: "tenantOverLicenseLimit is null"
+                    severity: "WARNING"
+    - ret:
+        return: ${tenantOverLicenseLimit} # Return the final value of the 'tenantOverLicenseLimit' flag.

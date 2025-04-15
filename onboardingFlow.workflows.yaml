@@ -9,7 +9,6 @@ main:
               groupKey: ${sys.get_env("KANDJI_GRACE_PERIOD_GROUP_KEY")}
               expiryDate: ${time.format((sys.now() + 60 * 60 * 24),"")}
           - slackWebhookUrl: ${sys.get_env("WEBHOOK_URL")}
-          
     # allows the new hire to use their work laptop without setting up 2FA
     # Then allows them to setup okta verify on their laptop instead of phone
     - addToKandjiGracePeriod:

@@ -1,0 +1,95 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+            - slackResTemplate:
+                ok: null
+                members: null
+                response_metadata: null
+                error: null
+            # - slackApiKey: ${googleapis.secretmanager.v1.projects.secrets.versions.access()}
+            - slackBaseUrl: ${sys.get_env("SLACK_API_BASE_URL")}
+            - emailRegex: ${sys.get_env("EMAIL_REGEX")}
+            - usersFound: []
+
+    - getSlackApiKey:
+        call: googleapis.secretmanager.v1.projects.secrets.versions.accessString
+        args:
+          secret_id: ${sys.get_env("SLACK_SECRET_ID")}
+          version: "latest"
+        result: slackApiKey
+    - getSlackListOfUsers:
+        call: http.get
+        args:
+          url: ${slackBaseUrl + "/users.list"}
+          headers:
+            Authorization: ${"Bearer " + slackApiKey}
+          query:
+            "limit": "200"
+        result: getSlackListOfUsersResponse
+    # iterate ovet them
+    - findUsers:
+        switch:
+          # check that the response is ok
+          - condition: ${getSlackListOfUsersResponse.body.ok != false and "members" in getSlackListOfUsersResponse.body and getSlackListOfUsersResponse.body.members != null}
+            steps:
+              # if response is good iterate over the members
+              - loopOverList:
+                  for:
+                    value: member
+                    in: ${getSlackListOfUsersResponse.body.members}}
+                    steps:
+                      - checkValidUser:
+                          switch:
+                            - condition: ${text.match_regex(member.profile.email,emailRegex)}
+                              # check if the email is a valid email
+                              steps:
+                                - callCheckUser:
+                                    call: checkUser
+                                    args:
+                                      user: ${member}
+                                    result: checkUserRes
+                                    switch:
+                                      - condition: ${checkUserRes}
+                                        steps:
+                                          - 
+
+                                          
+
+    - ret:
+        return: ${getSlackListOfUsersResponse}
+
+getGoogleUser:
+  params:
+    - userKey
+  steps:
+    - getUsers:
+        call: http.get
+        args:
+          url: ${"https://admin.googleapis.com/admin/directory/v1/users/" + userKey}
+          auth:
+            type: OAuth2
+            scope: "https://www.googleapis.com/auth/admin.directory.user.readonly"
+        result: getUsersResponse
+    - ret:
+        return: ${getUsersResponse}
+
+checkUser:
+  # check if the users are both active in google workspace and that they are not in the offboarding OU
+  # returns true or false
+  params:
+    - user # an instance of a slack member
+  steps:
+    - init:
+        assign:
+          - userKey: ${user.profile.email}
+          - offboardingOuName: ${sys.get_env("OFFBOARDING_OU_NAME")}
+    - getGoogleUser:
+        call: getGoogleUser
+        args:
+          userKey: ${userKey}
+        result: googleUser
+    - ret:
+        # true if user is not offboarded and false if they are
+        return: ${googleUser.suspended or googleUser.orgUnitPath == offboardingOuName}

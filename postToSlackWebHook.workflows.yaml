@@ -3,13 +3,35 @@ main:
   steps:
     - init:
         assign:
-          - payLoad: ${args.payLoad}
-          - webhookUrl: sys.get_env("WEBHOOK_URL")
+          - payLoad: ${args.payload} # Assign the payload from args to a variable
+          - webhookUrl: ${sys.get_env("WEBHOOK_URL")}
+          - payloadType: ${args.payload.type} # simple or complex
+    - determinePayLoadType:
+        switch:
+          - condition: ${payloadType == "simple"} # We are responsible for constructing the message
+            steps:
+              - constructSimplePayload:
+                  assign:
+                    - slackPayload:
+                        blocks:
+                          - type: header
+                            text:
+                              type: plain_text
+                              text: ${payLoad.simpleMessagePayload.header} # Access header from payLoad
+                              emoji: true
+                          - type: section
+                            text:
+                              type: plain_text
+                              text: ${payLoad.simpleMessagePayload.message} # Access message from payLoad
+                              emoji: true
+          - condition: ${payloadType == "complex"} # the invoker is responsible for constructing the message
+            assign:
+              - slackPayload: ${payLoad.complexMessagePayload} # Access complexMessagePayload from payLoad
     - postIt:
         call: http.post
         args:
           url: ${webhookUrl}
-          body: ${payLoad}
+          body: ${slackPayload}
         result: postItRes
     - ret:
         return: ${postItRes}
