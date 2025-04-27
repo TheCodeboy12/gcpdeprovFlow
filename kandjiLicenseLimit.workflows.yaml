@@ -6,6 +6,9 @@ main:
           - licensingEndpoint: "/api/v1/settings/licensing" # Define the specific endpoint for licensing information.
           - tenantOverLicenseLimit: false # Initialize a flag to track if the tenant is over the license limit.
           - kandjiSecretId: ${sys.get_env("KANDJI_SECRET_ID")} # Get the secret ID for the Kandji API key from environment variables.
+          - slackHeader: ${sys.get_env("SLACK_HEADER")}
+          - slackMessage: ${sys.get_env("SLACK_MESSAGE")}
+          
     - getKandjiApiKey:
         call: googleapis.secretmanager.v1.projects.secrets.versions.accessString # Call the Secret Manager API to retrieve the API key.
         args:
@@ -39,12 +42,12 @@ main:
                       payload:
                         type: "simple"
                         simpleMessagePayload:
-                          header: "Alert ⚠️: Kandji license over limit"
-                          message: This is to let you know that we are over our license limit on Kandji.
+                          header: ${slackHeader}
+                          message: ${slackMessage}
           - condition: ${getLicensingInfoResponse.body.tenantOverLicenseLimit == false} # Check if the 'tenantOverLicenseLimit' attribute is false.
             steps:
               - logUnderLimit:
-                  call: sys.log # Log an info message.
+                  call:  # Log an info message.
                   args:
                     text: "Tenant is under the license limit"
                     severity: "INFO"
