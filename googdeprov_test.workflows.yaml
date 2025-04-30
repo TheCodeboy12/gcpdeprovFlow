@@ -1,0 +1,235 @@
+main:
+  params: [args] # Accepts input arguments like {"userKey": "user@example.com"}
+  steps:
+    - init:
+        assign:
+          - data: ${json.decode(base64.decode(args.data.message.data))}
+          - userKey: ${map.get(data.employees[0].fields, "primaryEmail")}
+          - status: ${map.get(data.employees[0].fields, "status")}
+    - checkIfNull:
+        switch:
+          - condition: ${userKey == null}
+            raise: "No UserKey provided"
+          - condition: ${status == null}
+            raise: "No Status provided"
+          - condition: ${status != "INACTIVE"}
+            next: retActive
+    - start:
+        steps:
+          - deleteFromGroups:
+              steps:
+                - getUserGroups:
+                    call: getUserGoogleGroups
+                    args:
+                      userKey: ${userKey}
+                    result: listUserGroupsResponse
+                - checkNotEmpty:
+                    switch:
+                      - condition: ${map.get(listUserGroupsResponse.body,"groups") != null}
+                        steps:
+                          - loopOverList:
+                              for:
+                                value: group
+                                in: ${listUserGroupsResponse.body.groups}
+                                steps:
+                                  - remove:
+                                      call: deleteFromGroups
+                                      args:
+                                          userKey: ${userKey}
+                                          groupKey: ${group.id}
+                                  - logRemovedGroup:
+                                      call: sys.log
+                                      args:
+                                          json:
+                                            - groupRemoved: ${group.email}
+                                            - userKey: ${userKey}
+                                          severity: "INFO"
+          - moveToOffboardingOU:
+                call: changeOrgUnit
+                args:
+                    userKey: ${userKey}
+                    orgUnitPath: "/Off boarding"
+          - signUserOut:
+                call: signOut
+                args:
+                    userKey: ${userKey}
+          - deleteTokens:
+                call: deleteTokens
+                args:
+                    userKey: ${userKey}
+          - hideFromDirectory:
+                call: hideFromDirectory
+                args:
+                    userKey: ${userKey}
+          - postToSlack:
+              call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+              args:
+                workflow_id: "postToSlack"
+                argument:
+                  payload:
+                    type: "simple"
+                    simpleMessagePayload:
+                      header: "Done deprovisioning Google"
+                      message: ${userKey+ " has been deprovisioned from Google"}
+          - gotoRet:
+              next: ret
+    - retActive:
+        return: "No action taken. User is active" 
+    - ret:
+        return: ${userKey}
+
+
+
+getUser:
+  params: [userKey]
+  steps:
+    - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+    - main:
+        call: http.get
+        args:
+            url: ${baseURL + "/users/" + userKey}
+            auth:
+              type: OAuth2
+              scopes:
+                ["https://www.googleapis.com/auth/admin.directory.user.readonly"]
+        result: getUserResponse
+    - ret:
+        return: ${getUserResponse}
+
+getUserGoogleGroups:
+  params: [userKey]
+  steps:
+    - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+          - domain: ${sys.get_env("GOOG_DOMAIN")}
+    - main:
+        call: http.get
+        args:
+          url: ${baseURL + "/groups/"}
+          auth:
+            type: OAuth2
+            scopes: ["https://apps-apis.google.com/a/feeds/groups/"]
+          query:
+            userKey: ${userKey}
+            domain: ${domain}
+        result: getUserGroupsRes
+    - ret:
+        return: ${getUserGroupsRes}
+
+deleteFromGroups:
+  params: [userKey, groupKey]
+  steps:
+    - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+          - domain: ${sys.get_env("GOOG_DOMAIN")}
+    - main:
+        call: http.delete
+        args:
+          url: ${baseURL + "/groups/" + groupKey + "/members/" + userKey}
+          auth:
+            type: OAuth2
+            scopes: ["https://apps-apis.google.com/a/feeds/groups/"]
+        result: deleteFromGroupsRes
+    - ret:
+        return: ${deleteFromGroupsRes}
+
+changeOrgUnit:
+  params: [userKey, orgUnitPath]
+  steps:
+     - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+     - main:
+          call: http.put
+          args:
+              url: ${baseURL + "/users/" + userKey}
+              body:
+                orgUnitPath: ${orgUnitPath}
+              auth:
+                type: OAuth2
+                scopes: ["https://www.googleapis.com/auth/admin.directory.user"]
+          result: changeOrgUnitRes
+     - ret:
+          return: ${changeOrgUnitRes}
+
+signOut:
+  params: [userKey]
+  steps:
+     - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+     - main:
+          call: http.post
+          args:
+              url: ${baseURL + "/users/" + userKey + "/signOut"}
+              auth:
+                type: OAuth2
+                scopes: ["https://www.googleapis.com/auth/admin.directory.user.security"]
+          result: signUserOutRes
+     - ret:
+          return: ${signUserOutRes}
+
+deleteTokens:
+  params: [userKey]
+  steps:
+      - init:
+          assign:
+            - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+      - getAllTokens:
+          call: http.get
+          args:
+              url: ${baseURL + "/users/" + userKey + "/tokens"}
+              auth:
+                type: OAuth2
+                scope: "https://www.googleapis.com/auth/admin.directory.user.security"
+          result: deleteTokensRes
+      - checkNotEmpty:
+          switch:
+            - condition: ${map.get(deleteTokensRes.body,"items") != null}
+              steps:
+                - loopOverList:
+                    for:
+                      value: token
+                      in: ${deleteTokensRes.body.items}
+                      steps:
+                        - deleteToken:
+                            call: http.delete
+                            args:
+                              url: ${baseURL + "/users/" + userKey + "/tokens/" + token.clientId}
+                              auth:
+                                type: OAuth2
+                                scope: "https://www.googleapis.com/auth/admin.directory.user.security"
+                        - logTokenRemoval:
+                              call: sys.log
+                              args:
+                                json: {"TokenRemoved": '${token.displayText}'}
+                                severity: "INFO"
+hideFromDirectory:
+  params: [userKey]
+  steps:
+    - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+    - main:
+        call: http.put
+        args:
+          url: ${baseURL + "/users/" + userKey}
+          body:
+            includeInGlobalAddressList: false
+          auth:
+            type: OAuth2
+            scope: "https://www.googleapis.com/auth/admin.directory.user"
+        result: hideFromDirectoryRes
+    - logHideFromDirectory:
+          call: sys.log
+          args:
+            json:
+              userKey: ${userKey}
+              message: "Successfully hidden from directory"
+            severity: "INFO"
+    - ret:
+        return: ${hideFromDirectoryRes}

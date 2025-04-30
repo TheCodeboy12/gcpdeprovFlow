@@ -47,7 +47,7 @@ main:
           - condition: ${getLicensingInfoResponse.body.tenantOverLicenseLimit == false} # Check if the 'tenantOverLicenseLimit' attribute is false.
             steps:
               - logUnderLimit:
-                  call:  # Log an info message.
+                  call: sys.log # Log an info message.
                   args:
                     text: "Tenant is under the license limit"
                     severity: "INFO"
