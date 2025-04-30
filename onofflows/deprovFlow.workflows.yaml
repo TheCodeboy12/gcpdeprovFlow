@@ -4,53 +4,54 @@ main:
     - init:
         assign:
           - userKey: ${args.userKey}
-
-    - deleteFromGroups:
+    - start:
         steps:
-          - getUserGroups:
-              call: getUserGoogleGroups
-              args:
-                userKey: ${userKey}
-              result: listUserGroupsResponse
-          - checkNotEmpty:
-              switch:
-                - condition: ${map.get(listUserGroupsResponse.body,"groups") != null}
-                  steps:
-                    - loopOverList:
-                        for:
-                          value: group
-                          in: ${listUserGroupsResponse.body.groups}
-                          steps:
-                            - remove:
-                                call: deleteFromGroups
-                                args:
-                                    userKey: ${userKey}
-                                    groupKey: ${group.id}
-                            - logRemovedGroup:
-                                call: sys.log
-                                args:
-                                    json:
-                                      - groupRemoved: ${group.email}
-                                      - userKey: ${userKey}
-                                    severity: "INFO"
-                                    
-    - moveToOffboardingOU:
-          call: changeOrgUnit
-          args:
-              userKey: ${userKey}
-              orgUnitPath: "/Off boarding"
-    - signUserOut:
-          call: signOut
-          args:
-              userKey: ${userKey}
-    - deleteTokens:
-          call: deleteTokens
-          args:
-              userKey: ${userKey}
-    - hideFromDirectory:
-          call: hideFromDirectory
-          args:
-              userKey: ${userKey}
+          - deleteFromGroups:
+              steps:
+                - getUserGroups:
+                    call: getUserGoogleGroups
+                    args:
+                      userKey: ${userKey}
+                    result: listUserGroupsResponse
+                - checkNotEmpty:
+                    switch:
+                      - condition: ${map.get(listUserGroupsResponse.body,"groups") != null}
+                        steps:
+                          - loopOverList:
+                              for:
+                                value: group
+                                in: ${listUserGroupsResponse.body.groups}
+                                steps:
+                                  - remove:
+                                      call: deleteFromGroups
+                                      args:
+                                          userKey: ${userKey}
+                                          groupKey: ${group.id}
+                                  - logRemovedGroup:
+                                      call: sys.log
+                                      args:
+                                          json:
+                                            - groupRemoved: ${group.email}
+                                            - userKey: ${userKey}
+                                          severity: "INFO"
+      
+          - moveToOffboardingOU:
+                call: changeOrgUnit
+                args:
+                    userKey: ${userKey}
+                    orgUnitPath: "/Off boarding"
+          - signUserOut:
+                call: signOut
+                args:
+                    userKey: ${userKey}
+          - deleteTokens:
+                call: deleteTokens
+                args:
+                    userKey: ${userKey}
+          - hideFromDirectory:
+                call: hideFromDirectory
+                args:
+                    userKey: ${userKey}
     
 
 

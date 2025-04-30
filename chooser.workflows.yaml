@@ -1,0 +1,13 @@
+main:
+    params: [args]
+    steps:
+        - init:
+            assign:
+                - data : ${args.data}
+                - message: ${json.decode(base64.decode(data.message.data))}
+                - empStatus:
+                
+        - choose: 
+            for:
+
+            # return: ${message.employees[0].fields.status}

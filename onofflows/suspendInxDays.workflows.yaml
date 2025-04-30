@@ -22,16 +22,19 @@ main:
         switch:
           - condition: ${action == "suspend"}
             steps:
-              - define:
+              - setSuspended:
                   assign: 
                     - message: ${suspendMessage}
                   next: addTask
           - condition: ${action == "archive"}
             steps:
-              - define:
+              - setArchive:
                   assign:
                     - message: ${archiveMessage}
                   next: addTask
+        next: throwError
+    - throwError:
+        raise: "Invalid action"
     - addTask:
         call: googleapis.cloudtasks.v2.projects.locations.queues.tasks.create
         args:
