@@ -12,7 +12,7 @@ main:
             raise: "No UserKey provided"
           - condition: ${status == null}
             raise: "No Status provided"
-          - condition: ${status != "INACTIVE"}
+          - condition: ${text.to_lower(status) != text.to_lower("INACTIVE")}
             next: retActive
     - start:
         steps:
@@ -233,3 +233,26 @@ hideFromDirectory:
             severity: "INFO"
     - ret:
         return: ${hideFromDirectoryRes}
+
+changePasswordToRandom:
+  params: [userKey]
+  steps:
+    - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+    - main:
+        call: http.post
+        args:
+          url: ${baseURL + "/users/" + userKey}
+          auth:
+            type: OAuth2
+            scope: "https://www.googleapis.com/auth/admin.directory.user"
+          body: 
+            password: ${uuid.generate()}
+    - logPwChange:
+        call: sys.log
+        args:
+          json:
+            userKey: ${userKey}
+            message: "Successfully changed password"
+          severity: "INFO"

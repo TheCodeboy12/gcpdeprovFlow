@@ -1,0 +1,47 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        steps:
+          - initBasic:
+              assign:
+                  - data: ${json.decode(base64.decode(args.data.message.data))}
+                  - userKey: ${map.get(data.employees[0].fields, "primaryEmail")}
+                  - status: ${map.get(data.employees[0].fields, "status")}
+                  - baseURL: ${sys.get_env("KANDJI_API_BASE_URL")}
+          - initKandji:
+              assign:
+                - kandjiSecretId: ${sys.get_env("KANDJI_SECRET_ID")}
+                - kandjiApiKey: ${googleapis.secretmanager.v1.projects.secrets.versions.accessString(kandjiSecretId,"latest")}
+    - checkIfNull:
+        switch:
+          - condition: ${userKey == null}
+            raise: "No UserKey provided"
+          - condition: ${status == null}
+            raise: "No Status provided"
+          - condition: ${kandjiSecretId == null}
+            raise: "No Kandji Secret ID provided"
+          - condition: ${text.to_lower(status) != text.to_lower("INACTIVE")}
+            next: end
+    - start:
+        steps:
+          - findDevice:
+              call: http.get
+              args:
+                # baseURL should be https://{sub_domain}.api.kandji.io/api/v1
+                url: ${baseURL+"/devices"}
+                headers:
+                  Authorization: ${"Bearer " + kandjiApiKey}
+              result: devices
+          - lockDevices:
+              for:
+                value: device
+                in: ${devices}
+                steps:
+                  - lockDevice:
+                      call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                      args:
+                        workflow_id: "lockKandjiDevice"
+                        argument:
+                          payload: 
+                            - ${map.get(device , "device_id")}
