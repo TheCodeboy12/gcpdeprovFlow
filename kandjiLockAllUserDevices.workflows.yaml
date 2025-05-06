@@ -32,16 +32,18 @@ main:
                 url: ${baseURL+"/devices"}
                 headers:
                   Authorization: ${"Bearer " + kandjiApiKey}
+                query: 
+                    user_email: ${userKey}
               result: devices
           - lockDevices:
               for:
                 value: device
-                in: ${devices}
+                in: ${devices.body}
                 steps:
+                    # - gotoend:
+                    #     next: continue
                   - lockDevice:
                       call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
                       args:
                         workflow_id: "lockKandjiDevice"
-                        argument:
-                          payload: 
-                            - ${map.get(device , "device_id")}
+                        argument: ${map.get(device , "device_id")}

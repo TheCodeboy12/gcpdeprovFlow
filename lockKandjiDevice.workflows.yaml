@@ -10,33 +10,67 @@ main:
             - noneApiUrl: ${text.replace_all(baseURL,".api","")}
 
       - lockDevice:
-          call: http.post
+          steps: 
+            - sendLockRequest:
+                try: 
+                  call: http.post
+                  args:
+                    url: ${baseURL + "/api/v1/devices/"+deviceId+"/action/lock"}
+                    headers:
+                      Authorization: ${"Bearer " + kandjiApiKey}
+                    body: 
+                      message: '${deviceId + " has been locked. Pin is in the logs or Kandji admin console.\nLink for it: " + noneApiUrl + "/devices/" + deviceId}'
+                  result: lockDeviceResponse
+                except:
+                  as: e
+                  steps:
+                    - knownError:
+                        switch:
+                        - condition: ${e.code == 400}
+                          next: deviceLocked
+                    - unknwonError:
+                        raise: ${e}
+            - success:
+                steps:
+                  - postToSlackSuccess:
+                      call: postToSlack
+                      args:
+                        deviceId: ${deviceId}
+                        header: "Device Locked"
+                        message: '${deviceId + " has been locked. Pin is in the logs or Kandji admin console.\n Link for it: noneApiUrl" + "/devices/"+deviceId}'
+                  - logPin:
+                      call: sys.log
+                      args:
+                        severity: "INFO"
+                        json:
+                          Message: "Device locked"
+                          deviceId: ${deviceId}
+                          PIN: ${lockDeviceResponse.body.PIN}
+                      next: ret
+      - deviceLocked:
+          # nothing to log
+          call: postToSlack
           args:
-            url: ${baseURL + "/api/v1/devices/"+deviceId+"/action/lock"}
-            headers:
-              Authorization: ${"Bearer " + kandjiApiKey}
-            body: 
-              message: '${deviceId + " has been locked. Pin is in the logs or Kandji admin console.\nLink for it: " + noneApiUrl + "/devices/" + deviceId}'
-          result: lockDeviceResponse
-      - postToSlack:
-          call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
-          args:
-            workflow_id: "postToSlack"
-            argument:
-              payload:
-                type: "simple"
-                simpleMessagePayload:
-                  header: "Device Locked"
-                  message: '${deviceId + " has been locked. Pin is in the logs or Kandji admin console.\n Link for it: noneApiUrl + "/devices/"+deviceId}'
-      - logPin:
-          call: sys.log
-          args:
-            severity: "INFO"
-            json:
-              Message: "Device locked"
-              deviceId: ${deviceId}
-              PIN: ${lockDeviceResponse.body.PIN}
-
-      
+            deviceId: ${deviceId}
+            header: "Device already Locked"
+            message: '${"attempted to lock device :" + deviceId + " is already locked"}'
       - ret:
           return: ${lockDeviceResponse}
+
+postToSlack:
+  params:
+    - deviceId
+    - header
+    - message
+  steps:
+    - postIt:
+        call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+        args:
+          workflow_id: "postToSlack"
+          argument:
+            payload:
+              type: "simple"
+              simpleMessagePayload:
+                header: ${header}
+                message: ${message}
+        result: postToSlackRes
