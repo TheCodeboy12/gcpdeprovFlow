@@ -38,12 +38,24 @@ main:
           - lockDevices:
               for:
                 value: device
-                in: ${devices.body}
+                # in: ${devices.body}
+                in: ${map.get(devices, "body")}
                 steps:
                     # - gotoend:
                     #     next: continue
-                  - lockDevice:
-                      call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
-                      args:
-                        workflow_id: "lockKandjiDevice"
-                        argument: ${map.get(device , "device_id")}
+                  - checkDeviceAssignedToUser:
+                      assign:
+                        - deviceUserEmail : ${map.get(map.get(device, "user"), "email")}
+                        - deviceBelongsToUser: if ${and(deviceUserEmail != null), deviceUserEmail == userKey)}
+                  - lock:
+                      switch:
+                        - condition: ${deviceBelongsToUser}
+                          steps:     
+                            - lockDevice:
+                                call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                                args:
+                                  workflow_id: "lockKandjiDevice"
+                                  argument: ${device}
+                        # Default condition to skip this iteration.
+                        - condition: true
+                          next: continue
