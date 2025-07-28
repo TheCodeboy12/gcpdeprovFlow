@@ -6,7 +6,17 @@ main:
           - userKey: ${args.userKey}
           - delegateEmail: ${args.delegateEmail}
           - addDelegateCloudFuncUrl: ${sys.get_env("ADD_DELEGATE_CLOUD_FUNC_URL")}
-          
+    # The idea is that if the user is suspended then we need to unsuspend and if its not then nothing happens.
+    - unsuspendUser:
+        call: http.put
+        args:
+          url: ${"https://admin.googleapis.com/admin/directory/v1/users/" + userKey}
+          auth:
+            type: OAuth2
+            scope: "https://www.googleapis.com/auth/admin.directory.user"
+          body: 
+            suspended: false
+        result: unsuspendUserResponse
     - addDelegate:
         call: http.post
         args:
@@ -16,7 +26,7 @@ main:
             delegateEmail : ${delegateEmail}
           auth:
             type: OIDC
-
+            audience: '${addDelegateCloudFuncUrl}'
         result: addDelegateResponse
     - ret:
         return: addDelegateResponse
