@@ -9,6 +9,8 @@ main:
                   - userKey: ${map.get(data.employees[0].fields, "primaryEmail")}
                   - status: ${map.get(data.employees[0].fields, "status")}
                   - baseURL: ${sys.get_env("KANDJI_API_BASE_URL")}
+                  # An array to return containing the devices that this flow locks.
+                  - devicesLocked: [] 
           - initKandji:
               assign:
                 - kandjiSecretId: ${sys.get_env("KANDJI_SECRET_ID")}
@@ -56,6 +58,12 @@ main:
                                 args:
                                   workflow_id: "lockKandjiDevice"
                                   argument: ${device}
+                            - addToArray:
+                                assign:
+                                   - devicesLocked: ${list.concat(devicesLocked, device)}
+                                    
                         # Default condition to skip this iteration.
                         - condition: true
                           next: continue
+    - ret:
+        return: ${devicesLocked}
