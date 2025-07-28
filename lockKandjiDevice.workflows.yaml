@@ -1,6 +1,6 @@
 main:
     params:
-      - deviceId
+      - device
     steps:
       - init:
           assign:
@@ -8,6 +8,7 @@ main:
             - kandjiApiKey: ${googleapis.secretmanager.v1.projects.secrets.versions.accessString(kandjiSecretId,"latest")}
             - baseURL: ${sys.get_env("KANDJI_API_BASE_URL")}
             - noneApiUrl: ${text.replace_all(baseURL,".api","")}
+            - deviceId: ${map.get(device , "device_id")}
 
       - lockDevice:
           steps: 
