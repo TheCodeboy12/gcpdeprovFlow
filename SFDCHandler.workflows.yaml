@@ -1,0 +1,36 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - userKey: ${args.userKey}
+          - action: ${args.action}
+          - appName: "SFDC"
+    - checkAction:
+        switch:
+          - condition: ${action == "add"}
+            next: postAdd
+          - condition: ${action == "remove"}
+            next: postRemove
+          - condition: ${action == null}
+            raise: "No action provided"
+    - postAdd:
+        call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+        args:
+          workflow_id: "postToSlack"
+          argument:
+            payload:
+              type: "simple"
+              message: ${userKey + " has been added to " + appName +"\n" + "Please ensure to add them to it."}
+        next: end
+
+    - postRemove: 
+        call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+        args:
+          workflow_id: "postToSlack"
+          argument:
+            payload:
+              type: "simple"
+              message: ${userKey + " has been removed to " + appName +"\n" + "Please ensure to remove them from it."}
+        next: end
+        
