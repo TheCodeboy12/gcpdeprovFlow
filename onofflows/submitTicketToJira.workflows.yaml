@@ -1,0 +1,15 @@
+main:
+  params: [args] # Accepts input arguments like {"userKey": "user@example.com"}
+  steps:
+    - init:
+        assign:
+          - data: ${json.decode(base64.decode(args.data.message.data))}
+    - postToJira:
+        call: http.post
+        args:
+          url: "https://api-private.atlassian.com/automation/webhooks/jira/a/8b035a00-a94a-417f-b450-1b2f08a6a6de/019764ba-f9f7-72e6-aee3-024ff9fe2b79"
+          headers:
+            X-Automation-Webhook-Token: "c19c6338496c383f71fa9e67fd5a05ff4b53f68b"
+          body: '${data}'
+        result: postToJiraRes
+        return: '${postToJiraRes}'
