@@ -49,7 +49,7 @@ main:
                   - checkDeviceAssignedToUser:
                       assign:
                         - deviceUserEmail : ${map.get(map.get(device, "user"), "email")}
-                        - deviceBelongsToUser: if ${and(deviceUserEmail != null), deviceUserEmail == userKey)}
+                        - deviceBelongsToUser: ${if(deviceUserEmail != null and deviceUserEmail == userKey, true ,false)}
                   - lock:
                       switch:
                         - condition: ${deviceBelongsToUser}
