@@ -78,7 +78,7 @@ main:
                   mainRes: ${mainRes}
                 severity: "INFO"
           - ret:
-              return: ${mainRes}
+              return: ${mainRes.body}
 getUserId:
   params:
     - userKey
