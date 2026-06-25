@@ -7,9 +7,10 @@ main:
     - postToJira:
         call: http.post
         args:
-          url: "https://api-private.atlassian.com/automation/webhooks/jira/a/8b035a00-a94a-417f-b450-1b2f08a6a6de/019764ba-f9f7-72e6-aee3-024ff9fe2b79"
+          url: "https://api-private.atlassian.com/automation/webhooks/jira/a/8b035a00-a94a-417f-b450-1b2f08a6a6de/0190dfe6-e3f7-7767-9e23-9c11fc430f24"
           headers:
-            X-Automation-Webhook-Token: "c19c6338496c383f71fa9e67fd5a05ff4b53f68b"
+            X-Automation-Webhook-Token: "9a50776204b3c46f733ae6602e2635b4024f91e0"
           body: '${data}'
         result: postToJiraRes
+    - ret:
         return: '${postToJiraRes}'

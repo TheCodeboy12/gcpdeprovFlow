@@ -1,0 +1,32 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+            - slackResTemplate:
+                ok: null
+                members: null
+                response_metadata: null
+                error: null
+            # - slackApiKey: ${googleapis.secretmanager.v1.projects.secrets.versions.access()}
+            - slackBaseUrl: ${sys.get_env("SLACK_API_BASE_URL")}
+            - emailRegex: ${sys.get_env("EMAIL_REGEX")}
+
+    - getSlackApiKey:
+        call: googleapis.secretmanager.v1.projects.secrets.versions.accessString
+        args:
+          secret_id: ${sys.get_env("SLACK_SECRET_ID")}
+          version: "latest"
+        result: slackApiKey
+    - getSlackListOfUsers:
+        call: http.get
+        args:
+          url: ${slackBaseUrl + "/users.list"}
+          headers:
+            Authorization: ${"Bearer " + slackApiKey}
+          query:
+            "limit": "10"
+        result: getSlackListOfUsersResponse
+      
+    - ret:
+        return: ${getSlackListOfUsersResponse}

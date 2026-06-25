@@ -1,0 +1,77 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - email: ${args.email}
+    - callLookerDisable:
+        try:
+          steps:
+            - invokeCloudRun:
+                call: http.post
+                args:
+                  url: https://looker-disable-user-vekbmumyoq-uc.a.run.app
+                  auth:
+                    type: OIDC
+                    audience: https://looker-disable-user-vekbmumyoq-uc.a.run.app
+                  body:
+                    email: ${email}
+                result: lookerResult
+            - notifySuccess:
+                call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                args:
+                  workflow_id: "postToSlack"
+                  argument:
+                    payload:
+                      type: "simple"
+                      simpleMessagePayload:
+                        header: "Looker User Disabled"
+                        message: ${email + " has been disabled in Looker"}
+            - ret:
+                return:
+                  status: "success"
+                  message: ${lookerResult.body.message}
+        except:
+          as: e
+          steps:
+            - handleError:
+                switch:
+                  - condition: ${e.code == 404}
+                    steps:
+                      - notifyNotFound:
+                          call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                          args:
+                            workflow_id: "postToSlack"
+                            argument:
+                              payload:
+                                type: "simple"
+                                simpleMessagePayload:
+                                  header: "Looker Disable - User Not Found"
+                                  message: ${email + " was not found in Looker"}
+                      - retNotFound:
+                          return:
+                            status: "not_found"
+                            message: ${email + " was not found in Looker"}
+                  - condition: true
+                    steps:
+                      - logError:
+                          call: sys.log
+                          args:
+                            json:
+                              error: "Failed to disable Looker user"
+                              email: ${email}
+                              message: ${e.message}
+                            severity: "ERROR"
+                      - notifyError:
+                          call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                          args:
+                            workflow_id: "postToSlack"
+                            argument:
+                              payload:
+                                type: "simple"
+                                simpleMessagePayload:
+                                  header: "Looker Disable Failed"
+                                  message: ${email + " - failed to disable in Looker. Check logs."}
+                      - raiseError:
+                          raise: ${e}
+

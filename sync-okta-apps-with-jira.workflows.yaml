@@ -1,0 +1,79 @@
+
+main:
+    params: [args]
+    steps:
+        - getOktaKey:
+            call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+            args:
+                workflow_id: getGcpSecret
+                location: us-central1
+                project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+                argument: {"secretName": "Okta-API-Key", "version": "latest"}
+            result: oktaApiKey
+        - getOktaApps :
+            call: http.get
+            args:
+                url : "https://bizzabo-sso.okta.com/api/v1/apps"
+                headers:
+                    Accept: application/json
+                    Authorization: ${"SSWS "+ oktaApiKey}
+                query:
+                    "filter": 'status eq "ACTIVE"'
+                    "limit": 199
+            result: apps
+        - loopOverApps:
+            for:
+                value: app
+                in: ${apps.body}
+                steps:
+                    # - log:
+                    #     call: sys.log
+                    #     args: 
+                    #         data: ${app.label}
+                    
+                    - postToJira:
+                        try:
+                            steps:
+                                - get:
+                                    call: addToJira
+                                    args:
+                                        appName: ${app.label}
+                        except:
+                            as: e
+                            steps: 
+                                - continueStep: 
+                                    next: continue  # Add a step name
+        # - checkRes:
+        #     switch:
+        #       - condition: ${len(stagedUsers.body) == 0} # are there any users on that list? 
+        #         next: finishNoUsers
+        #       - condition: true 
+        #         next: finishWithUsers
+
+
+addToJira:
+    params: [appName]
+    steps:
+        # - log:
+        #     call: sys.log
+        #     args:
+        #         data: ${appName}
+        # - logTwo: 
+        #     call: sys.log
+        #     args:
+        #         data :
+        #             options :
+        #                 - value :
+        #                     ${appName}
+        - add:
+            call: http.post
+            args:
+                url: "https://bizzabo.atlassian.net/rest/api/3/field/customfield_12781/context/13439/option"
+                headers:
+                    Accept: application/json
+                    Content-Type: application/json
+                    Authorization: "Basic Z2FicmllbC5zQGJpenphYm8uY29tOkFUQVRUM3hGZkdGMEpObEFQZjRwT3FfMXlobmxaNWp2dHA3VzN6MnZFOG5idGFjRGRTM3VoWDZ5TzRTd25sM2RJSDd1VTZadUtYYnBtZXpoNUVDOFZmU0dEbFBTSzF6SzF0NWU0U1pSeHNGOGlGOHFHY3U3aENOREhodVlTVzhkcDltYk82amN0cWF1TEdBTmlCNXNrUWsxWDVBZ213bnJ5RGx0NG1LaG5VcmxIaG54dlRXTGxiaz1CMzkwMENDNQ=="
+                body:
+                    options :
+                        - value :
+                            ${appName}

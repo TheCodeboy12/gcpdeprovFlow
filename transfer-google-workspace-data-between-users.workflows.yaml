@@ -1,0 +1,424 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - driveDocsAppId: ${sys.get_env("DRIVE_DOCS_APP_ID")}
+          - calendarAppId: ${sys.get_env("CALENDAR_APP_ID")}
+          - sourceUserKey: ${getUserId(args.sourceUserKey)}
+          - destUserKey: ${getUserId(args.destUserKey)}
+          - calendar: ${args.calendar} # bool
+          - calendar_releaseResource: ${args.calendar_releaseResource} # bool
+          - driveDocs: ${args.driveDocs} # bool
+          - driveDocs_private_files: ${args.driveDocs_privacyLevel} # bool
+          - drivePrivacyLevel: "SHARED"
+          - apps: []
+          - transferId: null
+          - dataTransferRequestRes: null
+          - dataTransferPollRes: null
+          - appName: null
+          - appEntry: null
+          - userCheckRes: null
+          - delegateArg: null
+          - suspendArg: null
+          # --- Optional post-transfer actions (all default to off / safe values) ---
+          - addDelegateFlag: ${default(map.get(args, "addDelegate"), false)}
+          - delegateEmail: ${default(map.get(args, "delegateEmail"), args.destUserKey)}
+          - suspendInDays: ${default(map.get(args, "suspendInDays"), null)}
+          - suspendAction: ${default(map.get(args, "suspendAction"), "archive")}
+          - transferStatuses:
+              success: "completed"
+              inProgress: "inProgress"
+              pending: "pending"
+              failed: "failed"
+          # --- Outcome accumulator ---
+          - outcome:
+              sourceUser: ${args.sourceUserKey}
+              destUser: ${args.destUserKey}
+              unsuspendSource: "not attempted"
+              transferRequested: false
+              transferCreated: false
+              transferOverallStatus: null
+              apps: []
+              delegate: "not requested"
+              scheduledAction: "not requested"
+              errors: []
+
+    - assembleCalObj:
+        switch:
+          - condition: ${calendar}
+            steps:
+              - createCalObj:
+                  assign:
+                    - calObj:
+                        applicationId: ${calendarAppId}
+                        applicationTransferParams:
+                          - key: "RELEASE_RESOURCES"
+                            value:
+                              - ${if(calendar_releaseResource, "TRUE", "FALSE")}
+              - pushCalObj:
+                  assign:
+                    - apps: ${list.concat(apps, calObj)}
+
+    - assembleDriveObj:
+        switch:
+          - condition: ${driveDocs}
+            steps:
+              - checkPrivacyLevel:
+                  switch:
+                    - condition: ${driveDocs_private_files}
+                      steps:
+                        - define:
+                            assign:
+                              - drivePrivacyLevel: "PRIVATE"
+              - createDriveObj:
+                  assign:
+                    - driveObj:
+                        applicationId: ${driveDocsAppId}
+                        applicationTransferParams:
+                          - key: "PRIVACY_LEVEL"
+                            value:
+                              - ${drivePrivacyLevel}
+              - pushDriveObj:
+                  assign:
+                    - apps: ${list.concat(apps, driveObj)}
+
+    - logStart:
+        call: sys.log
+        args:
+          severity: "INFO"
+          json:
+            step: "start"
+            sourceUser: ${sourceUserKey}
+            destUser: ${destUserKey}
+            apps: ${apps}
+            addDelegate: ${addDelegateFlag}
+            suspendInDays: ${suspendInDays}
+            suspendAction: ${suspendAction}
+
+    # Both branches run concurrently. Branch A handles data transfer (no unsuspend
+    # needed). Branch B handles unsuspend → confirm active → delegate → schedule.
+    - runParallel:
+        parallel:
+          shared: [outcome, transferId, dataTransferRequestRes, dataTransferPollRes, appName, appEntry, userCheckRes, delegateArg, suspendArg]
+          branches:
+
+            # ── Branch A: Drive / Calendar data transfer ─────────────────────────
+            - dataTransferBranch:
+                steps:
+                  - checkIfTransferNeeded:
+                      switch:
+                        - condition: ${len(apps) == 0}
+                          next: transferBranchDone
+                  - markTransferRequested:
+                      assign:
+                        - outcome.transferRequested: true
+                  - doCreateTransfer:
+                      try:
+                        steps:
+                          - callCreateTransfer:
+                              call: http.post
+                              args:
+                                url: "https://admin.googleapis.com/admin/datatransfer/v1/transfers"
+                                auth:
+                                  type: OAuth2
+                                  scope: "https://www.googleapis.com/auth/admin.datatransfer"
+                                body:
+                                  oldOwnerUserId: ${sourceUserKey}
+                                  newOwnerUserId: ${destUserKey}
+                                  applicationDataTransfers: ${apps}
+                              result: dataTransferRequestRes
+                          - recordTransferCreated:
+                              assign:
+                                - outcome.transferCreated: true
+                                - transferId: ${map.get(dataTransferRequestRes.body, "id")}
+                          - logTransferCreated:
+                              call: sys.log
+                              args:
+                                severity: "INFO"
+                                json:
+                                  step: "createDataTransfer"
+                                  status: "created"
+                                  transferId: ${transferId}
+                      except:
+                        as: e
+                        steps:
+                          - recordTransferCreateErr:
+                              assign:
+                                - outcome.transferCreated: false
+                                - outcome.errors: '${list.concat(outcome.errors, "createDataTransfer: " + json.encode_to_string(e))}'
+                          - logTransferCreateErr:
+                              call: sys.log
+                              args:
+                                severity: "ERROR"
+                                json:
+                                  step: "createDataTransfer"
+                                  status: "failed"
+                                  error: ${e}
+                          - exitTransferOnCreateErr:
+                              next: transferBranchDone
+                  - pollTransfer:
+                      call: http.get
+                      args:
+                        url: '${"https://admin.googleapis.com/admin/datatransfer/v1/transfers/" + transferId}'
+                        auth:
+                          type: OAuth2
+                          scope: "https://www.googleapis.com/auth/admin.datatransfer"
+                      result: dataTransferPollRes
+                  - evaluateTransfer:
+                      switch:
+                        - condition: ${dataTransferPollRes.body.overallTransferStatusCode == transferStatuses.success}
+                          next: recordTransferDone
+                        - condition: ${dataTransferPollRes.body.overallTransferStatusCode == transferStatuses.failed}
+                          next: recordTransferDone
+                        - condition: true
+                          steps:
+                            - waitBeforeRepoll:
+                                call: sys.sleep
+                                args:
+                                  seconds: 60
+                          next: pollTransfer
+                  - recordTransferDone:
+                      assign:
+                        - outcome.transferOverallStatus: ${dataTransferPollRes.body.overallTransferStatusCode}
+                  - summarizeTransferApps:
+                      for:
+                        value: app
+                        in: ${default(map.get(dataTransferPollRes.body, "applicationDataTransfers"), [])}
+                        steps:
+                          - initAppName:
+                              assign:
+                                - appName: ${app.applicationId}
+                          - mapAppName:
+                              switch:
+                                - condition: ${app.applicationId == driveDocsAppId}
+                                  steps:
+                                    - setDriveName:
+                                        assign:
+                                          - appName: "Drive/Docs"
+                                - condition: ${app.applicationId == calendarAppId}
+                                  steps:
+                                    - setCalName:
+                                        assign:
+                                          - appName: "Calendar"
+                          - buildAppEntry:
+                              assign:
+                                - appEntry:
+                                    application: ${appName}
+                                    applicationId: ${app.applicationId}
+                                    status: ${app.applicationTransferStatus}
+                          - pushAppResult:
+                              assign:
+                                - outcome.apps: ${list.concat(outcome.apps, appEntry)}
+                  - logTransferComplete:
+                      call: sys.log
+                      args:
+                        severity: "INFO"
+                        json:
+                          step: "transferComplete"
+                          overallStatus: ${outcome.transferOverallStatus}
+                          apps: ${outcome.apps}
+                  - transferBranchDone:
+                      assign:
+                        - outcome: ${outcome}
+
+            # ── Branch B: unsuspend → poll until active → delegate → schedule ─────
+            - delegateBranch:
+                steps:
+                  - checkIfDelegateNeeded:
+                      switch:
+                        - condition: ${not addDelegateFlag}
+                          next: delegateBranchDone
+                  - doUnsuspend:
+                      try:
+                        steps:
+                          - callUnsuspend:
+                              call: http.put
+                              args:
+                                url: '${"https://admin.googleapis.com/admin/directory/v1/users/" + sourceUserKey}'
+                                auth:
+                                  type: OAuth2
+                                  scope: "https://www.googleapis.com/auth/admin.directory.user"
+                                body:
+                                  suspended: false
+                          - recordUnsuspendOk:
+                              assign:
+                                - outcome.unsuspendSource: "success"
+                          - logUnsuspendOk:
+                              call: sys.log
+                              args:
+                                severity: "INFO"
+                                json:
+                                  step: "unsuspendSource"
+                                  status: "success"
+                      except:
+                        as: e
+                        steps:
+                          - recordUnsuspendErr:
+                              assign:
+                                - outcome.unsuspendSource: "failed"
+                                - outcome.errors: '${list.concat(outcome.errors, "unsuspendSource: " + json.encode_to_string(e))}'
+                          - logUnsuspendErr:
+                              call: sys.log
+                              args:
+                                severity: "ERROR"
+                                json:
+                                  step: "unsuspendSource"
+                                  status: "failed"
+                                  error: ${e}
+                          - exitOnUnsuspendErr:
+                              next: delegateBranchDone
+                  # Poll the Directory API until suspended == false before attempting
+                  # delegation — there is a propagation delay after the PUT.
+                  - pollUnsuspendStatus:
+                      call: http.get
+                      args:
+                        url: '${"https://admin.googleapis.com/admin/directory/v1/users/" + sourceUserKey}'
+                        auth:
+                          type: OAuth2
+                          scope: "https://www.googleapis.com/auth/admin.directory.user.readonly"
+                      result: userCheckRes
+                  - checkUnsuspended:
+                      switch:
+                        - condition: ${userCheckRes.body.suspended == false}
+                          next: tryAddDelegate
+                        - condition: true
+                          steps:
+                            - waitForUnsuspend:
+                                call: sys.sleep
+                                args:
+                                  seconds: 10
+                          next: pollUnsuspendStatus
+                  - tryAddDelegate:
+                      try:
+                        steps:
+                          - buildDelegateArg:
+                              assign:
+                                - delegateArg:
+                                    userKey: ${args.sourceUserKey}
+                                    delegateEmail: ${delegateEmail}
+                          - callAddDelegate:
+                              call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.create
+                              args:
+                                parent: "projects/it-cloud-automations/locations/us-central1/workflows/addDelegate"
+                                body:
+                                  argument: ${json.encode_to_string(delegateArg)}
+                          - recordDelegateOk:
+                              assign:
+                                - outcome.delegate: '${"success: " + delegateEmail}'
+                          - logDelegateOk:
+                              call: sys.log
+                              args:
+                                severity: "INFO"
+                                json:
+                                  step: "addDelegate"
+                                  status: "success"
+                                  delegateEmail: ${delegateEmail}
+                      except:
+                        as: e
+                        steps:
+                          - checkDelegateAlreadyExists:
+                              switch:
+                                - condition: ${text.match_regex(json.encode_to_string(e), "alreadyExists")}
+                                  steps:
+                                    - recordDelegateIdempotent:
+                                        assign:
+                                          - outcome.delegate: '${"success (already exists): " + delegateEmail}'
+                                    - logDelegateIdempotent:
+                                        call: sys.log
+                                        args:
+                                          severity: "INFO"
+                                          json:
+                                            step: "addDelegate"
+                                            status: "alreadyExists"
+                                            delegateEmail: ${delegateEmail}
+                                  next: maybeScheduleSuspend
+                          - recordDelegateErr:
+                              assign:
+                                - outcome.delegate: "failed"
+                                - outcome.errors: '${list.concat(outcome.errors, "addDelegate: " + json.encode_to_string(e))}'
+                          - logDelegateErr:
+                              call: sys.log
+                              args:
+                                severity: "ERROR"
+                                json:
+                                  step: "addDelegate"
+                                  status: "failed"
+                                  error: ${e}
+                  - maybeScheduleSuspend:
+                      switch:
+                        - condition: ${suspendInDays != null}
+                          steps:
+                            - trySuspend:
+                                try:
+                                  steps:
+                                    - buildSuspendArg:
+                                        assign:
+                                          - suspendArg:
+                                              userKey: ${args.sourceUserKey}
+                                              inDays: ${suspendInDays}
+                                              action: ${suspendAction}
+                                    - callScheduleSuspend:
+                                        call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.create
+                                        args:
+                                          parent: "projects/it-cloud-automations/locations/us-central1/workflows/suspend-in-X-days"
+                                          body:
+                                            argument: ${json.encode_to_string(suspendArg)}
+                                    - recordSuspendOk:
+                                        assign:
+                                          - outcome.scheduledAction: '${"scheduled " + suspendAction + " in " + string(suspendInDays) + " days"}'
+                                    - logSuspendOk:
+                                        call: sys.log
+                                        args:
+                                          severity: "INFO"
+                                          json:
+                                            step: "scheduleSuspend"
+                                            status: "success"
+                                            action: ${suspendAction}
+                                            inDays: ${suspendInDays}
+                                except:
+                                  as: e
+                                  steps:
+                                    - recordSuspendErr:
+                                        assign:
+                                          - outcome.scheduledAction: "failed"
+                                          - outcome.errors: '${list.concat(outcome.errors, "scheduleSuspend: " + json.encode_to_string(e))}'
+                                    - logSuspendErr:
+                                        call: sys.log
+                                        args:
+                                          severity: "ERROR"
+                                          json:
+                                            step: "scheduleSuspend"
+                                            status: "failed"
+                                            error: ${e}
+                  - delegateBranchDone:
+                      assign:
+                        - outcome: ${outcome}
+
+    - finish:
+        steps:
+          - logSummary:
+              call: sys.log
+              args:
+                severity: "INFO"
+                json:
+                  step: "summary"
+                  outcome: ${outcome}
+          - ret:
+              return: ${outcome}
+
+getUserId:
+  params:
+    - userKey
+  steps:
+    - main:
+        call: http.get
+        args:
+          url: '${"https://admin.googleapis.com/admin/directory/v1/users/" + userKey}'
+          auth:
+            type: OAuth2
+            scope: "https://www.googleapis.com/auth/admin.directory.user.readonly"
+        result: getUserIdRes
+    - ret:
+        return: ${getUserIdRes.body.id}
+

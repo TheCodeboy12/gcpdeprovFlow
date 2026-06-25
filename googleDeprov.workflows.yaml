@@ -1,0 +1,501 @@
+main:
+  params: [args] # Accepts input arguments like {"userKey": "user@example.com"}
+  steps:
+    - init:
+        assign:
+          - data: ${json.decode(base64.decode(args.data.message.data))}
+          - userKey: ${map.get(data.employees[0].fields, "primaryEmail")}
+          - status: ${map.get(data.employees[0].fields, "status")}
+          - userDetails: ${data.employees[0].fields}
+          - errors: []
+          - successes: []
+          - hasErrors: false
+          - sep: ": "
+    - initExecution:
+        assign:
+          - executionId: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+          - executionLink: ${"https://console.cloud.google.com/workflows/workflow/us-central1/googleDeprov/execution/" + executionId + "?project=it-cloud-automations"}
+    - checkIfNull:
+        switch:
+          - condition: ${userKey == null}
+            raise: "No UserKey provided"
+          - condition: ${status == null}
+            raise: "No Status provided"
+          - condition: ${text.to_lower(status) != text.to_lower("INACTIVE")}
+            next: retActive
+    - start:
+        steps:
+          - deleteFromGroups:
+              try:
+                steps:
+                  - getUserGroups:
+                      call: getUserGoogleGroups
+                      args:
+                        userKey: ${userKey}
+                      result: listUserGroupsResponse
+                  - checkNotEmpty:
+                      switch:
+                        - condition: ${map.get(listUserGroupsResponse.body,"groups") != null}
+                          steps:
+                            - loopOverList:
+                                for:
+                                  value: group
+                                  in: ${listUserGroupsResponse.body.groups}
+                                  steps:
+                                    - removeFromGroupStep:
+                                        try:
+                                          steps:
+                                            - remove:
+                                                call: deleteFromGroups
+                                                args:
+                                                  userKey: ${userKey}
+                                                  groupKey: ${group.id}
+                                            - logRemovedGroup:
+                                                call: sys.log
+                                                args:
+                                                  json:
+                                                    groupRemoved: ${group.email}
+                                                    userKey: ${userKey}
+                                                  severity: "INFO"
+                                        except:
+                                          as: e
+                                          steps:
+                                            - logGroupError:
+                                                call: sys.log
+                                                args:
+                                                  json:
+                                                    error: "Failed to remove user from group"
+                                                    group: ${group.email}
+                                                    message: ${e.message}
+                                                  severity: "WARNING"
+                                            - trackGroupError:
+                                                assign:
+                                                  - errors: ${list.concat(errors, group.email)}
+                                                  - hasErrors: true
+                  - trackGroupsSuccess:
+                      assign:
+                        - successes: ${list.concat(successes, "group deletions")}
+              except:
+                as: e
+                steps:
+                  - logGroupsError:
+                      call: sys.log
+                      args:
+                        json:
+                          error: "Failed to fetch or process user groups"
+                          message: ${e.message}
+                        severity: "ERROR"
+                  - trackGroupsError:
+                      assign:
+                        - errors: ${list.concat(errors, "group fetch/process failed")}
+                        - hasErrors: true
+          - moveToOffboardingOU:
+              try:
+                steps:
+                  - doMoveToOffboardingOU:
+                      call: changeOrgUnit
+                      args:
+                        userKey: ${userKey}
+                        orgUnitPath: "/Off boarding"
+                  - trackOUSuccess:
+                      assign:
+                        - successes: ${list.concat(successes, "move to offboarding OU")}
+              except:
+                as: e
+                steps:
+                  - logOUError:
+                      call: sys.log
+                      args:
+                        json:
+                          error: "Failed to move to offboarding OU"
+                          message: ${e.message}
+                        severity: "ERROR"
+                  - trackOUError:
+                      assign:
+                        - errors: ${list.concat(errors, "move to offboarding OU failed")}
+                        - hasErrors: true
+          - signUserOut:
+              try:
+                steps:
+                  - doSignOut:
+                      call: signOut
+                      args:
+                        userKey: ${userKey}
+                  - trackSignOutSuccess:
+                      assign:
+                        - successes: ${list.concat(successes, "sign out")}
+              except:
+                as: e
+                steps:
+                  - logSignOutError:
+                      call: sys.log
+                      args:
+                        json:
+                          error: "Failed to sign user out"
+                          message: ${e.message}
+                        severity: "ERROR"
+                  - trackSignOutError:
+                      assign:
+                        - errors: ${list.concat(errors, "sign out failed")}
+                        - hasErrors: true
+          - deleteTokens:
+              try:
+                steps:
+                  - doDeleteTokens:
+                      call: deleteTokens
+                      args:
+                        userKey: ${userKey}
+                  - trackTokensSuccess:
+                      assign:
+                        - successes: ${list.concat(successes, "token deletion")}
+              except:
+                as: e
+                steps:
+                  - logTokensError:
+                      call: sys.log
+                      args:
+                        json:
+                          error: "Failed to delete user tokens"
+                          message: ${e.message}
+                        severity: "ERROR"
+                  - trackTokensError:
+                      assign:
+                        - errors: ${list.concat(errors, "token deletion failed")}
+                        - hasErrors: true
+          - hideFromDirectory:
+              try:
+                steps:
+                  - doHideFromDirectory:
+                      call: hideFromDirectory
+                      args:
+                        userKey: ${userKey}
+                  - trackHideSuccess:
+                      assign:
+                        - successes: ${list.concat(successes, "hide from directory")}
+              except:
+                as: e
+                steps:
+                  - logHideError:
+                      call: sys.log
+                      args:
+                        json:
+                          error: "Failed to hide from directory"
+                          message: ${e.message}
+                        severity: "ERROR"
+                  - trackHideError:
+                      assign:
+                        - errors: ${list.concat(errors, "hide from directory failed")}
+                        - hasErrors: true
+          - invoke_notion_disabler:
+              try:
+                steps:
+                  - build_notion_payload:
+                      assign:
+                        - notionArgument:
+                            email: ${userKey}
+                  - call_notion_disabler:
+                      call: http.post
+                      args:
+                        url: https://workflowexecutions.googleapis.com/v1/projects/it-cloud-automations/locations/us-central1/workflows/notion_disabler_service/executions
+                        auth:
+                          type: OAuth2
+                        body:
+                          argument: ${json.encode_to_string(notionArgument)}
+                      result: execution
+                  - trackNotionSuccess:
+                      assign:
+                        - successes: ${list.concat(successes, "notion disable")}
+              except:
+                as: e
+                steps:
+                  - logNotionError:
+                      call: sys.log
+                      args:
+                        json:
+                          error: "Failed to disable Notion"
+                          message: ${e.message}
+                        severity: "ERROR"
+                  - trackNotionError:
+                      assign:
+                        - errors: ${list.concat(errors, "notion disable failed")}
+                        - hasErrors: true
+          - invoke_looker_disabler:
+              try:
+                steps:
+                  - callLookerDisabler:
+                      call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                      args:
+                        workflow_id: "looker_disabler_service"
+                        argument:
+                          email: ${userKey}
+                      result: lookerDisablerResult
+                  - trackLookerSuccess:
+                      assign:
+                        - successes: ${list.concat(successes, "looker disable")}
+              except:
+                as: e
+                steps:
+                  - logLookerError:
+                      call: sys.log
+                      args:
+                        json:
+                          error: "Failed to invoke Looker disabler"
+                          message: ${e.message}
+                        severity: "ERROR"
+                  - trackLookerError:
+                      assign:
+                        - errors: ${list.concat(errors, "looker disable failed")}
+                        - hasErrors: true
+          - initFormattedStrings:
+              assign:
+                - userDetailsStr: ""
+                - successesStr: ""
+                - errorsStr: "(none)"
+                - userDetailKeys: ["firstName", "lastName", "primaryEmail", "jobTitle", "department", "division", "location", "empStatus", "status", "managerId", "personalEmail", "eeid", "employeNumber", "hireDate", "terminationDate"]
+          - buildUserDetailsStr:
+              for:
+                value: key
+                in: ${userDetailKeys}
+                steps:
+                  - appendUserField:
+                      assign:
+                        - userDetailsStr: ${userDetailsStr + key + sep + string(default(map.get(userDetails, key), "N/A")) + "\n"}
+          - buildSuccessesStr:
+              for:
+                value: item
+                in: ${successes}
+                steps:
+                  - appendSuccessItem:
+                      assign:
+                        - successesStr: ${successesStr + "- " + item + "\n"}
+          - buildErrorsStr:
+              switch:
+                - condition: ${hasErrors}
+                  steps:
+                    - resetErrorsStr:
+                        assign:
+                          - errorsStr: ""
+                    - loopOverErrors:
+                        for:
+                          value: item
+                          in: ${errors}
+                          steps:
+                            - appendErrorItem:
+                                assign:
+                                  - errorsStr: ${errorsStr + "- " + item + "\n"}
+          - setSlackHeader:
+              switch:
+                - condition: ${hasErrors}
+                  steps:
+                    - assignErrorHeader:
+                        assign:
+                          - slackHeader: "Google Deprovisioning Completed with Errors"
+                - condition: true
+                  steps:
+                    - assignSuccessHeader:
+                        assign:
+                          - slackHeader: "Done deprovisioning Google"
+          - buildSlackMessage:
+              assign:
+                - slackMessage: ${userKey + " deprovisioned from Google.\n\nUser Details:\n" + userDetailsStr + "\nSucceeded:\n" + successesStr + "\nFailed:\n" + errorsStr + "\n\nExecution ID:\n" + executionId + "\n" + executionLink}
+          - postToSlack:
+              try:
+                call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                args:
+                  workflow_id: "postToSlack"
+                  argument:
+                    payload:
+                      type: "simple"
+                      simpleMessagePayload:
+                        header: ${slackHeader}
+                        message: ${slackMessage}
+              except:
+                as: e
+                steps:
+                  - logSlackError:
+                      call: sys.log
+                      args:
+                        json:
+                          error: "Failed to post to Slack"
+                          message: ${e.message}
+                        severity: "ERROR"
+                  - trackSlackError:
+                      assign:
+                        - errors: ${list.concat(errors, "slack notification failed")}
+                        - hasErrors: true
+          - logSummary:
+              call: sys.log
+              args:
+                json:
+                  userKey: ${userKey}
+                  successes: ${successes}
+                  errors: ${errors}
+                severity: "INFO"
+          - gotoRet:
+              next: ret
+    - retActive:
+        return: "No action taken. User is active"
+    - ret:
+        return:
+          userDetails: ${userDetails}
+          executionId: ${executionId}
+          executionLink: ${executionLink}
+          successes: ${successes}
+          errors: ${errors}
+
+
+
+getUser:
+  params: [userKey]
+  steps:
+    - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+    - main:
+        call: http.get
+        args:
+            url: ${baseURL + "/users/" + userKey}
+            auth:
+              type: OAuth2
+              scopes:
+                ["https://www.googleapis.com/auth/admin.directory.user.readonly"]
+        result: getUserResponse
+    - ret:
+        return: ${getUserResponse}
+
+getUserGoogleGroups:
+  params: [userKey]
+  steps:
+    - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+          - domain: ${sys.get_env("GOOG_DOMAIN")}
+    - main:
+        call: http.get
+        args:
+          url: ${baseURL + "/groups/"}
+          auth:
+            type: OAuth2
+            scopes: ["https://apps-apis.google.com/a/feeds/groups/"]
+          query:
+            userKey: ${userKey}
+            domain: ${domain}
+        result: getUserGroupsRes
+    - ret:
+        return: ${getUserGroupsRes}
+
+deleteFromGroups:
+  params: [userKey, groupKey]
+  steps:
+    - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+          - domain: ${sys.get_env("GOOG_DOMAIN")}
+    - main:
+        call: http.delete
+        args:
+          url: ${baseURL + "/groups/" + groupKey + "/members/" + userKey}
+          auth:
+            type: OAuth2
+            scopes: ["https://apps-apis.google.com/a/feeds/groups/"]
+        result: deleteFromGroupsRes
+    - ret:
+        return: ${deleteFromGroupsRes}
+
+changeOrgUnit:
+  params: [userKey, orgUnitPath]
+  steps:
+     - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+     - main:
+          call: http.put
+          args:
+              url: ${baseURL + "/users/" + userKey}
+              body:
+                orgUnitPath: ${orgUnitPath}
+              auth:
+                type: OAuth2
+                scopes: ["https://www.googleapis.com/auth/admin.directory.user"]
+          result: changeOrgUnitRes
+     - ret:
+          return: ${changeOrgUnitRes}
+
+signOut:
+  params: [userKey]
+  steps:
+     - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+     - main:
+          call: http.post
+          args:
+              url: ${baseURL + "/users/" + userKey + "/signOut"}
+              auth:
+                type: OAuth2
+                scopes: ["https://www.googleapis.com/auth/admin.directory.user.security"]
+          result: signUserOutRes
+     - ret:
+          return: ${signUserOutRes}
+
+deleteTokens:
+  params: [userKey]
+  steps:
+      - init:
+          assign:
+            - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+      - getAllTokens:
+          call: http.get
+          args:
+              url: ${baseURL + "/users/" + userKey + "/tokens"}
+              auth:
+                type: OAuth2
+                scope: "https://www.googleapis.com/auth/admin.directory.user.security"
+          result: deleteTokensRes
+      - checkNotEmpty:
+          switch:
+            - condition: ${map.get(deleteTokensRes.body,"items") != null}
+              steps:
+                - loopOverList:
+                    for:
+                      value: token
+                      in: ${deleteTokensRes.body.items}
+                      steps:
+                        - deleteToken:
+                            call: http.delete
+                            args:
+                              url: ${baseURL + "/users/" + userKey + "/tokens/" + token.clientId}
+                              auth:
+                                type: OAuth2
+                                scope: "https://www.googleapis.com/auth/admin.directory.user.security"
+                        - logTokenRemoval:
+                              call: sys.log
+                              args:
+                                json: {"TokenRemoved": '${token.displayText}'}
+                                severity: "INFO"
+hideFromDirectory:
+  params: [userKey]
+  steps:
+    - init:
+        assign:
+          - baseURL: ${sys.get_env("GOOG_ADMIN_BASE_URL")}
+    - main:
+        call: http.put
+        args:
+          url: ${baseURL + "/users/" + userKey}
+          body:
+            includeInGlobalAddressList: false
+          auth:
+            type: OAuth2
+            scope: "https://www.googleapis.com/auth/admin.directory.user"
+        result: hideFromDirectoryRes
+    - logHideFromDirectory:
+          call: sys.log
+          args:
+            json:
+              userKey: ${userKey}
+              message: "Successfully hidden from directory"
+            severity: "INFO"
+    - ret:
+        return: ${hideFromDirectoryRes}
+

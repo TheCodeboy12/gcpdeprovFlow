@@ -1,0 +1,105 @@
+main:
+    params:
+      - device
+    steps:
+      - init:
+          assign:
+            - kandjiSecretId: ${sys.get_env("KANDJI_SECRET_ID")}
+            - kandjiApiKey: ${googleapis.secretmanager.v1.projects.secrets.versions.accessString(kandjiSecretId,"latest")}
+            - baseURL: ${sys.get_env("KANDJI_API_BASE_URL")}
+            - noneApiUrl: ${text.replace_all(baseURL,".api","")}
+            - deviceId: ${map.get(device , "device_id")}
+            # Kandji's erase endpoint REQUIRES a 6-digit PIN. The caller may
+            # supply one via the "PIN" field; otherwise we generate one below.
+            - erasePin: ${map.get(device , "PIN")}
+            # Build a console link to THIS execution for the Slack messages.
+            - projectId: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+            - location: ${sys.get_env("GOOGLE_CLOUD_LOCATION")}
+            - workflowId: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_ID")}
+            - executionId: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+            - executionLink: ${"https://console.cloud.google.com/workflows/workflow/" + location + "/" + workflowId + "/execution/" + executionId + "?project=" + projectId}
+
+      - resolvePin:
+          assign:
+            # Generate a 6-digit PIN by stripping non-digits from the execution
+            # UUID (random per run) and taking the first 6. Append "000000" so
+            # the substring always has at least 6 characters to slice.
+            - generatedPin: ${text.substring(text.replace_all_regex(executionId, "[^0-9]", "") + "000000", 0, 6)}
+            - effectivePin: ${generatedPin}
+      - maybeUseProvidedPin:
+          switch:
+            - condition: ${erasePin != null}
+              steps:
+                - overridePin:
+                    assign:
+                      - effectivePin: ${erasePin}
+      - buildBody:
+          assign:
+            - eraseBody:
+                PIN: ${effectivePin}
+
+      - eraseDevice:
+          steps:
+            - sendEraseRequest:
+                try:
+                  call: http.post
+                  args:
+                    url: ${baseURL + "/api/v1/devices/" + deviceId + "/action/erase"}
+                    headers:
+                      Authorization: ${"Bearer " + kandjiApiKey}
+                    body: ${eraseBody}
+                  result: eraseDeviceResponse
+                except:
+                  as: e
+                  steps:
+                    - log_error:
+                        call: sys.log
+                        args:
+                          data: ${e}
+                          severity: ERROR
+                    - postToSlackError:
+                        call: postToSlack
+                        args:
+                          deviceId: ${deviceId}
+                          header: "Device Erase FAILED"
+                          message: '${"Failed to erase device " + deviceId + ". See logs for details.\nExecution: " + executionLink}'
+                    - raiseError:
+                        raise: ${e}
+            - success:
+                steps:
+                  - postToSlackSuccess:
+                      call: postToSlack
+                      args:
+                        deviceId: ${deviceId}
+                        header: "Device Erase Triggered"
+                        message: '${"An erase (wipe) command has been sent to device " + deviceId + ".\nUnlock PIN: " + effectivePin + "\nKandji: " + noneApiUrl + "/devices/" + deviceId + "\nExecution: " + executionLink}'
+                  - logErase:
+                      call: sys.log
+                      args:
+                        severity: "INFO"
+                        json:
+                          Message: "Device erase command sent"
+                          deviceId: ${deviceId}
+                          PIN: ${effectivePin}
+                      next: ret
+      - ret:
+          return: ${eraseDeviceResponse}
+
+postToSlack:
+  params:
+    - deviceId
+    - header
+    - message
+  steps:
+    - postIt:
+        call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+        args:
+          workflow_id: "postToSlack"
+          argument:
+            payload:
+              type: "simple"
+              simpleMessagePayload:
+                header: ${header}
+                message: ${message}
+        result: postToSlackRes
+

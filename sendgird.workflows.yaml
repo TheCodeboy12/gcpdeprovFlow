@@ -14,14 +14,14 @@ main:
               assign:
                 - userKey: '${args.userKey}'
                 - baseUrl: '${sys.get_env("BASE_URL")}'
+                - apiKey : ${"Bearer "+ apiKey}
     - removeFromSendGrid:
         call: http.delete
         args:
           url: '${baseUrl + "/v3/teammates/" + userKey}'
           headers:
-            "Authorization": '${"Bearer" + apiKey}'
-            "Content-Type": "application/json"
-            "Accept": "application/json"
+            Authorization: ${apiKey}
+            Accept: "application/json"
         result : removeFromSendGridRes
     - ret:
         return: ${removeFromSendGridRes}

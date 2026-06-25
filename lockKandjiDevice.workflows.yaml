@@ -20,11 +20,16 @@ main:
                     headers:
                       Authorization: ${"Bearer " + kandjiApiKey}
                     body: 
-                      message: '${deviceId + " has been locked. Pin is in the logs or Kandji admin console.\nLink for it: " + noneApiUrl + "/devices/" + deviceId}'
+                      Message: "Your device has been locked for security reasons. If you believe that this is a mistake, please contact it-support@bizzabo.com"
                   result: lockDeviceResponse
                 except:
                   as: e
                   steps:
+                    - log_error:
+                        call: sys.log
+                        args:
+                            data: ${e}
+                            severity: ERROR
                     - knownError:
                         switch:
                         - condition: ${e.code == 400}

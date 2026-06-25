@@ -1,0 +1,47 @@
+main:
+    params: []
+    steps:
+        - init:
+            assign:
+                - dates:
+                    - "2021-04-12"
+                    - "2025-04-14"
+                    - "2025-04-15"
+        - loopdi:
+            for:
+                value: date
+                in: ${dates}
+                steps:
+                    - initDates:
+                        assign:
+                            - formattedDate: ${date + "T00:00:00Z"}
+                            - epochDate: ${time.parse(formattedDate)}
+                    - checkDate:
+                        switch:
+                            - condition: ${sys.now() > epochDate}
+                              next: dateBefore 
+                            - condition: ${sys.now() <= epochDate}
+                              next: dateNowOrLater
+
+
+                    - dateNowOrLater:
+                        call: sys.log
+                        args:
+                            json:
+                                message: "date is in the future"
+                                currentSysDate: ${sys.now()}
+                                receivedEpoch: ${epochDate}
+                                receivedHumenDate: ${date}
+                                formattedDate: ${formattedDate}
+                        next: continue
+                    - dateBefore:
+                        call: sys.log
+                        args:
+                            json:
+                                message: "date is in the past or now"
+                                currentSysDate: ${sys.now()}
+                                receivedEpoch: ${epochDate}
+                                receivedHumenDate: ${date}
+                                formattedDate: ${formattedDate}
+                        next: continue
+

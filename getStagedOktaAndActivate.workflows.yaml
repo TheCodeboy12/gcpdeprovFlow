@@ -1,0 +1,106 @@
+
+main:
+    params: [args]
+    steps:
+        - getOktaKey:
+            call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+            args:
+                workflow_id: getGcpSecret
+                location: us-central1
+                project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+                argument: {"secretName": "Okta-API-Key", "version": "latest"}
+            result: oktaApiKey
+        - getStagedUsers :
+            call: http.get
+            args:
+                url : "https://bizzabo-sso.okta.com/api/v1/users?search=status+eq+%22STAGED%22"
+                headers:
+                    Accept: application/json
+                    Authorization: ${"SSWS "+ oktaApiKey}
+            result: stagedUsersRes
+        - checkRes:
+            switch:
+              - condition: ${len(stagedUsersRes.body) == 0} # are there any users on that list? 
+                next: finishNoUsers
+              - condition: true 
+                next: finishWithUsers
+
+
+            
+        # - returnResult:  # Separate step to return the result
+        #     return: ${stagedUsers}
+        - finishNoUsers:
+            #Users found and we want to do stuff with them
+            return: "No users found so none activated." 
+        - finishWithUsers:
+        # Do something else for non-empty results
+            steps:
+                - activateUsers:
+                    call: activateOktaUsers
+                    args:
+                        stagedUsersResBody: ${stagedUsersRes.body}
+                        oktaApiKey: ${oktaApiKey}
+                - ret:
+                    return: ${stagedUsersRes.body}
+
+activateOktaUsers:
+    params:
+        - stagedUsersResBody
+        - oktaApiKey
+    steps:
+        - logUsers:
+            call: sys.log
+            args:
+                json: 
+                    message: "Got staged users"
+                    stagedUsers: ${stagedUsersResBody}
+                severity: "INFO"
+        - activate:
+            for :
+                value: user
+                in: ${stagedUsersResBody}
+                steps:
+                    - checkAttributes:
+                        switch:
+                            - condition: ${"hireDate" in user.profile and user.profile.hireDate != "" and "hris_id" in user.profile and user.profile.hris_id != ""}
+                              next: init
+                            - condition: true
+                              next: continue
+                    - init:
+                        assign:
+                            - hireDate: ${time.parse(user.profile.hireDate + "T00:00:00Z")}
+                    # - logUser:
+                    #     call: sys.log
+                    #     args:
+                    #         json:
+                    #             user: ${user}
+                    #             hireDate: ${hireDate}
+                    - checkHireDate:
+                        switch:
+                            - condition: ${sys.now() >= hireDate}
+                              steps:
+                                - activateUser:
+                                    call: http.post
+                                    args:
+                                        url: ${"https://bizzabo-sso.okta.com/api/v1/users/"+ user.id + "/lifecycle/activate"}
+                                        headers:
+                                            Accept: application/json
+                                            Authorization: ${"SSWS "+ oktaApiKey}
+                                    result: userActivationRes
+                                - log_userActivationRes:
+                                    call: sys.log
+                                    args:
+                                        json: 
+                                            message: "Activated user"
+                                            userActivationRes: ${userActivationRes}
+                                        severity: "INFO"
+                                - callOnboardingFlow:
+                                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                                    args:
+                                        workflow_id: "onboardingFlow"
+                                        argument:
+                                            oktaUserObject: ${user}
+                                    result: onboardingFlowResponse
+                    
+                                
+

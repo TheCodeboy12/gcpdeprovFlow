@@ -1,0 +1,46 @@
+main:
+  params: [args]
+  steps:
+    - validate_args:
+        steps:
+          - check_email:
+              switch:
+                - condition: ${not("email" in args) or args.email == null or args.email == ""}
+                  raise: "Missing required argument: email"
+          - set_vars:
+              assign:
+                - email: ${args.email}
+    - call_notion_disabler:
+        call: http.post
+        args:
+            url: https://notion-disabler-247382818838.us-central1.run.app/remove
+            auth:
+                type: OIDC
+            body:
+                dry_run: false
+                email: ${email}
+        result: response
+    - check_response:
+        switch:
+          - condition: ${response.code == 200}
+            next: build_slack_payload
+        next: return_result
+    - build_slack_payload:
+        assign:
+          - slackArgument:
+              payload:
+                type: simple
+                simpleMessagePayload:
+                  header: "Notion Disabler"
+                  message: ${"Removed " + email + " from Notion."}
+    - notify_slack:
+        call: http.post
+        args:
+            url: https://workflowexecutions.googleapis.com/v1/projects/it-cloud-automations/locations/us-central1/workflows/postToSlack/executions
+            auth:
+                type: OAuth2
+            body:
+                argument: ${json.encode_to_string(slackArgument)}
+        result: slack_execution
+    - return_result:
+        return: ${response}

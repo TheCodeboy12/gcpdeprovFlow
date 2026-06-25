@@ -1,0 +1,17 @@
+main:
+  steps:
+    - create_callback:
+        call: events.create_callback_endpoint
+        args:
+            http_callback_method: "GET"
+        result: callback_details
+    - log_callback_details:
+                call: sys.log
+                args:
+                    text: ${callback_details}
+    - await_callback:
+        call: events.await_callback
+        args:
+            callback: ${callback_details}
+        result: callback_request
+    
