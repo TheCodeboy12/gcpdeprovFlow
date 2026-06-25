@@ -1,30 +1,67 @@
 # This is a sample workflow to test or replace with your source code.
-# We will process bambooHR base64 strings here and pass them to the approppriate thing 
+# We will process bambooHR base64 strings here and pass them to the approppriate thing
 main:
-    params: [input]
+    params: [args]
     steps:
-    - checkSearchTermInInput:
-        switch:
-            - condition: '${"searchTerm" in input}'
-              assign:
-                - searchTerm: '${input.searchTerm}'
-              next: readWikipedia
-    - getLocation:
-        call: sys.get_env
-        args:
-            name: GOOGLE_CLOUD_LOCATION
-        result: location
-    - setFromCallResult:
-        assign:
-            - searchTerm: '${text.split(location, "-")[0]}'
-    - readWikipedia:
-        call: http.get
-        args:
-            url: 'https://en.wikipedia.org/w/api.php'
-            query:
-                action: opensearch
-                search: '${searchTerm}'
-        result: wikiResult
-    - returnOutput:
-            return: '${wikiResult.body[1]}'
+        - getData:
+            # map.get returns null instead of erroring if the path is missing
+            assign:
+                - data: ${map.get(args, ["data", "message", "data"])}
+        - checkData:
+            switch:
+                - condition: ${data == null}
+                  steps:
+                    - noData:
+                        raise: "Pub/Sub payload has no message.data"
+        - decode:
+            call: decodeMessage
+            args:
+                data: ${data}
+            result: payload
+        # The "data structure": normalize each employee into a known shape.
+        # Payload is { "employees": [ { id, action, changedFields, fields, timestamp } ] }.
+        # map.get returns null if missing; default(value, fallback) swaps in a default.
+        - mapFields:
+            assign:
+                - employees: ${default(map.get(payload, "employees"), [])}
+                - events: []
+                - emptyMap: {}  # {} is only valid as a literal here, not inside ${}
+        - buildEvents:
+            for:
+                value: emp
+                in: ${employees}
+                steps:
+                    - normalize:
+                        assign:
+                            - event:
+                                id: ${default(map.get(emp, "id"), "")}
+                                action: ${default(map.get(emp, "action"), "unknown")}
+                                changedFields: ${default(map.get(emp, "changedFields"), [])}
+                                fields: ${default(map.get(emp, "fields"), emptyMap)}
+                                timestamp: ${default(map.get(emp, "timestamp"), "")}
+                            - events: ${list.concat(events, event)}
+        - done:
+            return: ${events}
 
+# Pub/Sub delivers the message body base64-encoded at args.message.data.
+# base64.decode -> bytes, text.decode -> string, json.decode -> object.
+# ponytail: assumes the payload is JSON. If BambooHR sends raw text, drop the
+# json.decode line and return ${string} instead.
+decodeMessage:
+    params: [data]
+    steps:
+        - decode:
+            try:
+                steps:
+                    - run:
+                        assign:
+                            - bytes: ${base64.decode(data)}
+                            - string: ${text.decode(bytes)}
+                            - payload: ${json.decode(string)}
+            except:
+                as: e
+                steps:
+                    - fail:
+                        raise: '${"Failed to decode message.data: " + e.message}'
+        - return:
+            return: ${payload}
